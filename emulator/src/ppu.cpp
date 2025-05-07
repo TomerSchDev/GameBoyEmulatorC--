@@ -231,10 +231,78 @@ int PPU::getColorFromPalette(BYTE palette, int colorId) {
         case 2: return 96;    // Dark gray
         case 3: return 0;     // Black
     }
-    return 0;s
+    return 0;
 }
 void PPU::renderSprites() {
-    // Placeholder for sprite rendering logic
+    BYTE lcdControl = memoryController->read(LCD_CONTROL);
+    bool use8x16 = (lcdControl & 0x04) != 0;  // Bit 2: OBJ (Sprite) Size (0=8x8, 1=8x16)
+    int spriteSize = use8x16 ? 16 : 8;
+
     BYTE currentLine = memoryController->read(LY_REGISTER);
-    LOG_DEBUG("Rendering sprites for scanline: " + std::to_string(currentLine));
+
+    for (int spriteIndex = 0; spriteIndex < MAX_SPRITES; spriteIndex++) {
+        // Calculate the address of the sprite's attributes
+        WORD spriteAddress = OAM_START + (spriteIndex * SPRITE_ATTRIBUTE_SIZE);
+
+        // Read the sprite's attributes
+        BYTE yPos = memoryController->read(spriteAddress + SPRITE_Y_POS) - 16;
+        BYTE xPos = memoryController->read(spriteAddress + SPRITE_X_POS) - 8;
+        BYTE tileIndex = memoryController->read(spriteAddress + SPRITE_TILE_INDEX);
+        BYTE attributes = memoryController->read(spriteAddress + SPRITE_ATTRIBUTES);
+
+        // Check if the sprite is visible on the current scanline
+        if (currentLine >= yPos && currentLine < (yPos + spriteSize)) {
+            bool yFlip = (attributes & SPRITE_Y_FLIP) != 0;
+            bool xFlip = (attributes & SPRITE_X_FLIP) != 0;
+            bool paletteNumber = (attributes & SPRITE_PALETTE) != 0;
+
+            // Determine the palette address
+            WORD paletteAddress = paletteNumber ? 0xFF49 : 0xFF48;
+
+            // Calculate the line within the sprite
+            int line = currentLine - yPos;
+            if (yFlip) {
+                line = spriteSize - 1 - line;
+            }
+
+            // Calculate the address of the tile data
+            WORD tileDataAddress = 0x8000 + (tileIndex * 16) + (line * 2);
+
+            // Read the tile data
+            BYTE data1 = memoryController->read(tileDataAddress);
+            BYTE data2 = memoryController->read(tileDataAddress + 1);
+
+            // Render the sprite pixels
+            for (int tilePixel = 0; tilePixel < 8; tilePixel++) {
+                int colorBit = tilePixel;
+                if (xFlip) {
+                    colorBit = 7 - tilePixel;
+                }
+
+                // Extract the color number from the tile data
+                int colorNum = ((data2 >> (7 - colorBit)) & 0x01) << 1;
+                colorNum |= ((data1 >> (7 - colorBit)) & 0x01);
+
+                // Get the color from the palette
+                int color = getColorFromPalette(memoryController->read(paletteAddress), colorNum);
+
+                // White is transparent for sprites
+                if (color == 255) {
+                    continue;
+                }
+
+                // Calculate the x position of the pixel
+                int xPix = xPos + tilePixel;
+
+                // Check if the pixel is within the screen bounds
+                if (currentLine >= 0 && currentLine < 144 && xPix >= 0 && xPix < 160) {
+                    // Convert grayscale color to RGBA8888
+                    Uint32 rgbaColor = (color << 24) | (color << 16) | (color << 8) | 0xFF;
+
+                    // Write the pixel to the screen buffer
+                    screenBuffer[currentLine * 160 + xPix] = rgbaColor;
+                }
+            }
+        }
+    }
 }

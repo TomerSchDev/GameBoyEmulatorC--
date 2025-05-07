@@ -103,6 +103,24 @@ constexpr int TILE_SIZE = 16;             // Size of each tile in bytes
 constexpr int TILE_WIDTH = 8;              // Width of a tile in pixels
 constexpr int TILE_HEIGHT = 8;             // Height of a tile in pixels
 
+// Sprite-related constants
+constexpr WORD OAM_START = 0xFE00;       // Start of Sprite Attribute Table (OAM)
+constexpr WORD OAM_END = 0xFE9F;         // End of Sprite Attribute Table (OAM)
+constexpr int MAX_SPRITES = 40;           // Maximum number of sprites
+constexpr int SPRITE_ATTRIBUTE_SIZE = 4;  // Size of each sprite attribute in bytes
+
+// Sprite attribute offsets
+constexpr int SPRITE_Y_POS = 0;           // Y position offset
+constexpr int SPRITE_X_POS = 1;           // X position offset
+constexpr int SPRITE_TILE_INDEX = 2;      // Tile index offset
+constexpr int SPRITE_ATTRIBUTES = 3;      // Attributes offset
+
+// Sprite attribute flags
+constexpr BYTE SPRITE_PRIORITY = 0x80;     // Bit 7: Sprite to Background Priority
+constexpr BYTE SPRITE_Y_FLIP = 0x40;        // Bit 6: Y flip
+constexpr BYTE SPRITE_X_FLIP = 0x20;        // Bit 5: X flip
+constexpr BYTE SPRITE_PALETTE = 0x10;       // Bit 4: Palette number
+
 
 // Interrupt priority (lower index = higher priority)
 enum class InterruptType {

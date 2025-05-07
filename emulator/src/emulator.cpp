@@ -172,9 +172,23 @@ void Emulator::handleInterrupts() {
 }
 
 void Emulator::render() {
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
-    // Add PPU rendering here
+
+    const std::array<Uint32, 160 * 144>& screenBuffer = ppu->getScreenBuffer();
+
+    // Pitch is the width of the texture in bytes
+    int pitch = 160 * sizeof(Uint32);
+
+    // Update the texture with the new data
+    SDL_UpdateTexture(texture, nullptr, screenBuffer.data(), pitch);
+
+    // Copy the texture to the renderer
+    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+
+    // Update the screen
     SDL_RenderPresent(renderer);
+
 }
 bool Emulator::unloadGame() {
     if (!loaded) {

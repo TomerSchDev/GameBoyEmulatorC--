@@ -14,7 +14,7 @@ union Register
    BYTE hi ;
   };
 };
-
+class MemoryController; // Forward declaration of MemoryController class
 class CPU {
     private:
         BYTE m_ScreenData[SCREEN_PIXELS_WIDTH][SCREEN_PIXELS_HEIGHT][3];

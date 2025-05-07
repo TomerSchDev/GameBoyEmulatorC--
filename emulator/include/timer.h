@@ -13,7 +13,7 @@ constexpr BYTE TIMER_ENABLE_BIT = 0x04;     // Bit 2 controls timer enable/disab
 constexpr BYTE CLOCK_SELECT_MASK = 0x03;    // Bits 0-1 select clock frequency
 constexpr BYTE DIVIDER_MAX = 255;
 
-
+class MemoryController; // Forward declaration of MemoryController class
 class Timer {
 private:
     std::shared_ptr<MemoryController> memoryController;

@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-
+#include <common.h>
 enum class MemoryRegion {
     ROM_BANK_0,          // 0x0000 - 0x3FFF
     ROM_BANK_N,          // 0x4000 - 0x7FFF
@@ -13,6 +13,7 @@ enum class MemoryRegion {
     IO_PORTS,           // 0xFF00 - 0xFF7F
     HRAM,              // 0xFF80 - 0xFFFE
     DMA_REGISTER,       // 0xFF46
+    JOYPAD_REGISTER,    // 0xFF00
     INTERRUPT_ENABLE    // 0xFFFF
 };
 
@@ -28,6 +29,7 @@ inline MemoryRegion getMemoryRegion(WORD address) {
     if (address <= 0xFF7F) return MemoryRegion::IO_PORTS;
     if (address <= 0xFFFE) return MemoryRegion::HRAM;
     if (address == DMA_REGISTER) return MemoryRegion::DMA_REGISTER;
+    if (address == JOYPAD_REGISTER) return MemoryRegion::JOYPAD_REGISTER;
     return MemoryRegion::INTERRUPT_ENABLE;
 }
 
@@ -45,6 +47,7 @@ inline std::string getMemoryRegionName(MemoryRegion region) {
         case MemoryRegion::HRAM: return "HRAM";
         case MemoryRegion::INTERRUPT_ENABLE: return "INTERRUPT_ENABLE";
         case MemoryRegion::DMA_REGISTER: return "DMA_REGISTER";
+        case MemoryRegion::JOYPAD_REGISTER: return "JOYPAD_REGISTER";
         default: return "UNKNOWN";
     }
 }

@@ -7,12 +7,15 @@
 #include <ram.h>
 #include <cart.h>
 #include <memory>
+#include <emulator.h>
+class Emulator; // Forward declaration of Emulator class
 
 class MemoryController {
 private:
     std::unique_ptr<RAM> ram;
     std::unique_ptr<Cart> cart;
-    
+    Emulator* emulator; // Pointer to the Emulator instance
+
     // Banking related members
     bool m_EnableRAM;
     bool m_ROMBanking;
@@ -52,6 +55,19 @@ public:
     bool attachCart(std::unique_ptr<Cart> newCart);
     bool detachCart();
     bool hasCart() const { return cart != nullptr && cart->isLoaded(); }
+    bool attachEmulator(Emulator* newEmulator) {
+        if (!newEmulator) {
+            LOG_ERROR("Attempting to attach null emulator instance");
+            return false;
+        }
+        if (emulator) {
+            LOG_WARNING("Attempting to attach emulator while another is present");
+            return false;
+        }
+        emulator = newEmulator;
+        return emulator != nullptr;
+    }
+
 
 private:
     // Banking helpers

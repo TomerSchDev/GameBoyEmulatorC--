@@ -20,6 +20,12 @@ BYTE MemoryController::read(WORD address) const {
     BYTE value = 0xFF;
 
     switch (region) {
+        case MemoryRegion::JOYPAD_REGISTER:
+        {
+            // Handle joypad register read
+            BYTE joypadRequest = read(JOYPAD_REGISTER);
+            return (joypadRequest & 0xF0) | emulator->joypad.GetState(joypadRequest);
+        }
         case MemoryRegion::ROM_BANK_0:
             if (cart && cart->isLoaded()) {
                 return cart->read(address);
@@ -167,6 +173,14 @@ void MemoryController::write(WORD address, BYTE data) {
     LOG_DEBUG(ss.str());
 
     switch (region) {
+        case MemoryRegion::JOYPAD_REGISTER:
+        {
+            // Handle joypad register write
+            BYTE joypadRequest = read(JOYPAD_REGISTER);
+            ram->write(JOYPAD_REGISTER, joypadRequest & 0xF0);
+            break;
+        }
+            
         case MemoryRegion::ROM_BANK_0:
         case MemoryRegion::ROM_BANK_N:
             HandleBanking(address, data);

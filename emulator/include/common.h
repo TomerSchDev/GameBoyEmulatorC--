@@ -104,8 +104,6 @@ constexpr int TILE_WIDTH = 8;              // Width of a tile in pixels
 constexpr int TILE_HEIGHT = 8;             // Height of a tile in pixels
 
 // Sprite-related constants
-constexpr WORD OAM_START = 0xFE00;       // Start of Sprite Attribute Table (OAM)
-constexpr WORD OAM_END = 0xFE9F;         // End of Sprite Attribute Table (OAM)
 constexpr int MAX_SPRITES = 40;           // Maximum number of sprites
 constexpr int SPRITE_ATTRIBUTE_SIZE = 4;  // Size of each sprite attribute in bytes
 
@@ -121,7 +119,22 @@ constexpr BYTE SPRITE_Y_FLIP = 0x40;        // Bit 6: Y flip
 constexpr BYTE SPRITE_X_FLIP = 0x20;        // Bit 5: X flip
 constexpr BYTE SPRITE_PALETTE = 0x10;       // Bit 4: Palette number
 
+// Joypad register
+constexpr WORD JOYPAD_REGISTER = 0xFF00;
 
+// Joypad bit assignments
+constexpr BYTE JOYPAD_RIGHT = 0;
+constexpr BYTE JOYPAD_LEFT = 1;
+constexpr BYTE JOYPAD_UP = 2;
+constexpr BYTE JOYPAD_DOWN = 3;
+constexpr BYTE JOYPAD_A = 4;
+constexpr BYTE JOYPAD_B = 5;
+constexpr BYTE JOYPAD_SELECT = 6;
+constexpr BYTE JOYPAD_START = 7;
+
+// Joypad select bits
+constexpr BYTE JOYPAD_SELECT_BUTTONS = 0x20; // Bit 5
+constexpr BYTE JOYPAD_SELECT_DIRECTIONS = 0x10; // Bit 4
 // Interrupt priority (lower index = higher priority)
 enum class InterruptType {
     VBlank = 0,

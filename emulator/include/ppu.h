@@ -2,23 +2,22 @@
 #include <memory>
 #include "memory_controller.h"
 #include "logger.h"
-
-
+#include <array>
+class MemoryController; // Forward declaration of MemoryController class
 class PPU {
 private:
     std::shared_ptr<MemoryController> memoryController;
     int scanlineCounter;
     bool lcdEnabled;
     BYTE currentMode;
-    std::array<BYTE, 160 * 144> screenBuffer;
-
+    std::array<Uint32, 160 * 144> screenBuffer;
 
 public:
     PPU(std::shared_ptr<MemoryController> memory);
     ~PPU() = default;
     void update(int cycles);
 
-    const std::array<BYTE, 160 * 144>& getScreenBuffer() const { return screenBuffer; }
+    const std::array<Uint32, 160 * 144>& getScreenBuffer() const { return screenBuffer; }
 
 
 private:

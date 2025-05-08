@@ -196,6 +196,13 @@ void Emulator::update()
         timer->update(cycles);
         ppu->update(cycles);
         handleInterrupts();
+        LOG_DEBUG("Cycles executed: " + std::to_string(cycles));
+        LOG_DEBUG("Total cycles this update: " + std::to_string(cyclesThisUpdate));
+        LOG_DEBUG("Cycles per frame: " + std::to_string(CYCLES_PER_FRAME));
+        LOG_DEBUG("Cycles remaining: " + std::to_string(CYCLES_PER_FRAME - cyclesThisUpdate));
+        if (cyclesThisUpdate >= CYCLES_PER_FRAME) {
+            break;
+        }
     }
 }
 
@@ -217,7 +224,7 @@ void Emulator::render() {
     SDL_SetRenderDrawColor(this->renderer, 0, 0, 0, 255);
     SDL_RenderClear(this->renderer);
 
-    const std::array<Uint32, 160 * 144>& screenBuffer = ppu->getScreenBuffer();
+    const std::array<Uint32, SCREEN_PIXELS_WIDTH * SCREEN_PIXELS_HEIGHT>& screenBuffer = ppu->getScreenBuffer();
 
     // Pitch is the width of the texture in bytes
     int pitch = 160 * sizeof(Uint32);
@@ -235,19 +242,19 @@ void Emulator::render() {
 
 BYTE Emulator::GetJoypadState() {
     BYTE joypadRequest = memoryController->read(JOYPAD_REGISTER);
-    BYTE joypadOutput = joypadRequest | 0x0F; // Initialize with all buttons unpressed (1)
+    BYTE joypadOutput = joypadRequest | LOWER_NIBBLE_MASK; // Initialize with all buttons unpressed (1)
 
     // flip all the bits
-    joypadOutput ^= 0xFF;
+    joypadOutput ^= BYTE_MASK;
 
     // are we interested in the standard buttons?
     if (!(joypadRequest & JOYPAD_SELECT_DIRECTIONS)) {
         BYTE topJoypad = joypad.GetJoypadState() >> 4;
-        topJoypad |= 0xF0; // turn the top 4 bits on
+        topJoypad |= UPPER_NIBBLE_MASK; // turn the top 4 bits on
         joypadOutput &= topJoypad; // show what buttons are pressed
     } else if (!(joypadRequest & JOYPAD_SELECT_BUTTONS)) { // directional buttons
         BYTE bottomJoypad = joypad.GetJoypadState() & 0xF;
-        bottomJoypad |= 0xF0;
+        bottomJoypad |= UPPER_NIBBLE_MASK;
         joypadOutput &= bottomJoypad;
     }
     return joypadOutput;

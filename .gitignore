@@ -3,4 +3,4 @@
 **/bin
 **/.vscode
 **/build
-emulator.log
+**.log

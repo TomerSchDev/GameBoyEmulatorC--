@@ -77,7 +77,7 @@ BYTE Timer::read(WORD address) const {
         default:
             LOG_WARNING("Attempted to read from invalid timer address: 0x" + 
                         std::to_string(address));
-            return 0xFF; // Invalid read
+            return BYTE_MASK; // Invalid read
     }
 }
 

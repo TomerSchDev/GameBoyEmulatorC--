@@ -10,14 +10,14 @@ private:
     int scanlineCounter;
     bool lcdEnabled;
     BYTE currentMode;
-    std::array<Uint32, 160 * 144> screenBuffer;
+    std::array<Uint32, SCREEN_PIXELS_WIDTH * SCREEN_PIXELS_HEIGHT> screenBuffer;
 
 public:
-    PPU(std::shared_ptr<MemoryController> memory);
+    explicit PPU(std::shared_ptr<MemoryController> memory);  // Add explicit keyword
     ~PPU() = default;
     void update(int cycles);
 
-    const std::array<Uint32, 160 * 144>& getScreenBuffer() const { return screenBuffer; }
+    const std::array<Uint32, SCREEN_PIXELS_WIDTH * SCREEN_PIXELS_HEIGHT>& getScreenBuffer() const { return screenBuffer; }
 
 
 private:
@@ -30,5 +30,6 @@ private:
     void checkLYCInterrupt();
     void renderTiles();
     void renderSprites();
+    void setPixel(int x, int y, Uint32 color);
     int getColorFromPalette(BYTE palette, int colorId);
 };

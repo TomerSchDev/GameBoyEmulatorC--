@@ -6,6 +6,9 @@ PPU::PPU(std::shared_ptr<MemoryController> memory)
     , currentMode(MODE_HBLANK)  // Start in HBlank mode
 {
     LOG_INFO("PPU initialized");
+        // Initialize screen buffer to white
+    screenBuffer.fill(0xFFFFFFFF);
+
 }
 
 void PPU::update(int cycles) {
@@ -145,76 +148,95 @@ void PPU::drawScanline() {
         renderSprites();
     }
 }
-void PPU::renderTiles() {
-    BYTE lcdControl = memoryController->read(LCD_CONTROL);
 
-    // Get scroll and window positions
-    BYTE scrollY = memoryController->read(SCY_REGISTER);
-    BYTE scrollX = memoryController->read(SCX_REGISTER);
-    BYTE windowY = memoryController->read(WY_REGISTER);
-    BYTE windowX = memoryController->read(WX_REGISTER);
 
-    // Get tile map and data addresses
-    WORD bgTileMapAddress = (lcdControl & 0x08) ? BG_TILE_MAP_2 : BG_TILE_MAP_1;
-    WORD tileDataAddress = (lcdControl & 0x10) ? TILE_DATA_1 : TILE_DATA_2;
-    bool signedTileData = !(lcdControl & 0x10);
-
-    // Get current scanline
-    BYTE currentLine = memoryController->read(LY_REGISTER);
-
-    // Get background palette
-    BYTE bgPalette = memoryController->read(BGP_REGISTER);
-
-    // Iterate through pixels for the current scanline
-    for (int x = 0; x < 160; x++) {
-        // Calculate tile coordinates
-        WORD tileX = (x + scrollX) / 8;
-        WORD tileY = (currentLine + scrollY) / 8;
-        WORD tileOffset = tileY * 32 + tileX;
-
-        // Read tile identifier from tile map
-        BYTE tileIdentifier = memoryController->read(bgTileMapAddress + tileOffset);
-
-        // Calculate tile data address
-        WORD tileData;
-        if (signedTileData) {
-            // Signed tile identifier
-            SIGNED_BYTE signedId = (SIGNED_BYTE)tileIdentifier;
-            tileData = TILE_DATA_2 + ((signedId + 128) * TILE_SIZE);
-        } else {
-            // Unsigned tile identifier
-            tileData = TILE_DATA_1 + (tileIdentifier * TILE_SIZE);
-        }
-
-        // Calculate pixel offset within the tile
-        int pixelX = (x + scrollX) % 8;
-        int pixelY = (currentLine + scrollY) % 8;
-        WORD pixelOffset = pixelY * 2;
-
-        // Read tile data (2 bytes per line)
-        BYTE byte1 = memoryController->read(tileData + pixelOffset);
-        BYTE byte2 = memoryController->read(tileData + pixelOffset + 1);
-
-        // Extract color ID for the pixel
-        int colorBit = 7 - pixelX;
-        int colorId = ((byte2 >> colorBit) & 0x01) << 1 | ((byte1 >> colorBit) & 0x01);
-
-        // Map color ID to color using the palette
-        int color = getColorFromPalette(bgPalette, colorId);
-
-        // Placeholder for writing pixel to screen buffer
-        LOG_DEBUG("Pixel color: " + std::to_string(color));
-        // Convert grayscale color to RGBA8888
-        Uint32 rgbaColor = (color << 24) | (color << 16) | (color << 8) | 0xFF;
-
-        // Write pixel to screen buffer
-        int bufferIndex = currentLine * 160 + x;
-        if (bufferIndex >= 0 && bufferIndex < screenBuffer.size()) {
-            screenBuffer[bufferIndex] = rgbaColor;
-        }
-    
+// First, fix the buffer index comparison issue
+void PPU::setPixel(int x, int y, Uint32 color) {
+    size_t bufferIndex = y * SCREEN_PIXELS_WIDTH + x;
+    if (bufferIndex < screenBuffer.size()) {  // Remove redundant >= 0 check since size_t is unsigned
+        screenBuffer[bufferIndex] = color;
     }
 }
+
+// Now fix the renderTiles function with proper window handling
+void PPU::renderTiles() {
+    BYTE lcdControl = memoryController->read(LCD_CONTROL);
+    BYTE scrollY = memoryController->read(SCY_REGISTER);
+    BYTE scrollX = memoryController->read(SCX_REGISTER);
+    
+    // Get current scanline first
+    BYTE currentLine = memoryController->read(LY_REGISTER);
+    
+    // Window position registers
+    BYTE windowY = memoryController->read(WY_REGISTER);
+    BYTE windowX = memoryController->read(WX_REGISTER) - 7;  // WX is offset by 7
+    bool windowEnabled = (lcdControl & 0x20) && windowY <= currentLine;
+
+    // Determine which tile data area to use
+    WORD tileDataArea = (lcdControl & 0x10) ? TILE_DATA_1 : TILE_DATA_2;
+    bool unsignedIndexing = (lcdControl & 0x10);
+
+    // Background tile map selection
+    WORD bgTileMap = (lcdControl & 0x08) ? BG_TILE_MAP_2 : BG_TILE_MAP_1;
+    
+    // Window tile map selection
+    WORD windowTileMap = (lcdControl & 0x40) ? WINDOW_TILE_MAP_2 : WINDOW_TILE_MAP_1;
+
+    // Draw the 160 pixels for this scanline
+    for (int pixel = 0; pixel < SCREEN_PIXELS_WIDTH; pixel++) {
+        bool useWindow = windowEnabled && pixel >= windowX;
+        
+        // Calculate which tile we're currently drawing
+        BYTE x = useWindow ? pixel - windowX : (pixel + scrollX);
+        BYTE y = useWindow ? currentLine - windowY : (currentLine + scrollY);
+        
+        // Get the tile map we're using
+        WORD tileMap = useWindow ? windowTileMap : bgTileMap;
+        
+        // Calculate tile coordinates
+        BYTE tileX = x / 8;
+        BYTE tileY = y / 8;
+        
+        // Get the tile index from the tile map
+        WORD tileMapAddress = tileMap + (tileY * 32) + tileX;
+        BYTE tileIndex = memoryController->read(tileMapAddress);
+
+        // Calculate tile data address
+        WORD tileDataAddress;
+        if (unsignedIndexing) {
+            tileDataAddress = tileDataArea + (tileIndex * 16);
+        } else {
+            tileDataAddress = tileDataArea + ((static_cast<signed char>(tileIndex) + 128) * 16);
+        }
+
+        // Get the specific line of the tile we need
+        BYTE tileLine = y % 8;
+        BYTE tileData1 = memoryController->read(tileDataAddress + (tileLine * 2));
+        BYTE tileData2 = memoryController->read(tileDataAddress + (tileLine * 2) + 1);
+
+        // Get the specific pixel
+        BYTE pixelBit = 7 - (x % 8);
+        BYTE colorNum = ((tileData2 >> pixelBit) & 1) << 1;
+        colorNum |= (tileData1 >> pixelBit) & 1;
+
+        // Get the color from the background palette
+        BYTE bgPalette = memoryController->read(BGP_REGISTER);
+        BYTE color = (bgPalette >> (colorNum * 2)) & 0x03;
+
+        // Convert color to RGBA (adjust these values as needed)
+        Uint32 pixelColor;
+        switch(color) {
+            case 0: pixelColor = 0xFFFFFFFF; break; // White
+            case 1: pixelColor = 0xAAAAAA; break;   // Light gray
+            case 2: pixelColor = 0x555555; break;   // Dark gray
+            case 3: pixelColor = 0x000000; break;   // Black
+            default: pixelColor = 0xFF00FF; break;  // Error color (pink)
+        }
+
+        setPixel(pixel, currentLine, pixelColor);
+    }
+}
+
 int PPU::getColorFromPalette(BYTE palette, int colorId) {
     int color = 0;
     switch (colorId) {
@@ -297,7 +319,7 @@ void PPU::renderSprites() {
                 // Check if the pixel is within the screen bounds
                 if (currentLine >= 0 && currentLine < 144 && xPix >= 0 && xPix < 160) {
                     // Convert grayscale color to RGBA8888
-                    Uint32 rgbaColor = (color << 24) | (color << 16) | (color << 8) | 0xFF;
+                    Uint32 rgbaColor = (color << 24) | (color << 16) | (color << 8) | BYTE_MASK;
 
                     // Write the pixel to the screen buffer
                     screenBuffer[currentLine * 160 + xPix] = rgbaColor;

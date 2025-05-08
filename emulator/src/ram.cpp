@@ -15,7 +15,7 @@ BYTE RAM::read(WORD address) const {
     if (address >= RAM_SIZE) {
         LOG_ERROR("Attempted read from invalid address: 0x" + 
                  std::to_string(address));
-        return 0xFF;
+        return BYTE_MASK;
     }
 
     // Special handling for Echo RAM (0xE000-0xFDFF mirrors 0xC000-0xDDFF)
@@ -31,7 +31,7 @@ BYTE RAM::read(WORD address) const {
     if (address >= 0xFEA0 && address <= 0xFEFF) {
         LOG_WARNING("Read attempt from restricted area: 0x" + 
                    std::to_string(address));
-        return 0xFF;
+        return BYTE_MASK;
     }
 
     return m_memory[address];

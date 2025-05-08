@@ -6,9 +6,22 @@ const int SCREEN_WIDTH = 640;
 const int SCREEN_HEIGHT = 480;
 
 int main(int argc, char* argv[]) {
+    bool debugMode = false;
+    if (argc > 1) {
+        //check if the first argument is "debug" to enable debug mode
+        if (std::string(argv[1]) == "debug") {
+            // Enable debug mode
+            std::cout << "Debug mode enabled" << std::endl;
+            debugMode = true;
+        } 
+    }
     auto logger = Logger::getInstance();
-    logger->setLogLevel(LogLevel::DEBUG);
-    
+    Logger::getInstance()->setLogLevel(LogLevel::INFO);;
+    if (debugMode) {
+        // Set the log level to DEBUG if debug mode is enabled
+        logger = Logger::getInstance("emulator_debug.log");
+        Logger::getInstance()->setLogLevel(LogLevel::DEBUG);
+    }    
     // Create emulator instance
     Emulator emulator;
     
@@ -20,10 +33,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Try to load ROM
-    std::string gamePath = "roms\\Pokemon_Red.gb";
-    if (argc > 1) {
-        gamePath = argv[1];
-    }
+    std::string gamePath = "roms\\Tetris.gb"; // Change this to your ROM path
+    
 
     LOG_INFO("Loading ROM: " + gamePath);
     if (!emulator.loadGame(gamePath)) {

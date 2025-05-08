@@ -17,14 +17,14 @@ MemoryController::MemoryController()
 
 BYTE MemoryController::read(WORD address) const {
     auto region = getMemoryRegion(address);
-    BYTE value = 0xFF;
+    BYTE value = BYTE_MASK;
 
     switch (region) {
         case MemoryRegion::JOYPAD_REGISTER:
         {
             // Handle joypad register read
             BYTE joypadRequest = read(JOYPAD_REGISTER);
-            return (joypadRequest & 0xF0) | emulator->joypad.GetState(joypadRequest);
+            return (joypadRequest & UPPER_NIBBLE_MASK) | emulator->joypad.GetState(joypadRequest);
         }
         case MemoryRegion::ROM_BANK_0:
             if (cart && cart->isLoaded()) {
@@ -75,7 +75,7 @@ void MemoryController::DoRamBankEnable(WORD address, BYTE data) {
     }
 
     // Check lower nibble for both MBC1 and MBC2
-    BYTE testData = data & 0x0F;
+    BYTE testData = data & LOWER_NIBBLE_MASK;
     if (testData == 0x0A) {
         m_EnableRAM = true;
     } else if (testData == 0x00) {
@@ -89,7 +89,7 @@ void MemoryController::DoRamBankEnable(WORD address, BYTE data) {
 void MemoryController::DoChangeLoROMBank(BYTE data) {
     // MBC2 handling - only uses lower 4 bits
     if (m_MBC2) {
-        m_CurrentROMBank = data & 0x0F;
+        m_CurrentROMBank = data & LOWER_NIBBLE_MASK;
         if (m_CurrentROMBank == 0) {
             m_CurrentROMBank++;  // Bank 0 is fixed at 0x0000-0x3FFF
         }
@@ -177,7 +177,7 @@ void MemoryController::write(WORD address, BYTE data) {
         {
             // Handle joypad register write
             BYTE joypadRequest = read(JOYPAD_REGISTER);
-            ram->write(JOYPAD_REGISTER, joypadRequest & 0xF0);
+            ram->write(JOYPAD_REGISTER, joypadRequest & UPPER_NIBBLE_MASK);
             break;
         }
             
@@ -246,11 +246,14 @@ bool MemoryController::attachCart(std::unique_ptr<Cart> newCart) {
     
     cart = std::move(newCart);
     
-    // Set MBC type based on cartridge type
-    // TODO: Implement cartridge type detection
-    
-    LOG_INFO("Cartridge attached to Memory Controller");
-    return true;
+        // Set MBC type based on cartridge type
+        BYTE cartType = cart->getCartridgeType();
+        m_MBC1 = (cartType >= 0x01 && cartType <= 0x03);
+        m_MBC2 = (cartType >= 0x05 && cartType <= 0x06);
+        
+        LOG_INFO("Cartridge attached to Memory Controller - MBC Type: " + 
+                 std::string(m_MBC1 ? "MBC1" : (m_MBC2 ? "MBC2" : "ROM Only")));
+        return true;
 }
 
 bool MemoryController::detachCart() {

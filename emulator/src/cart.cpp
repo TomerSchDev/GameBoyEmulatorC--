@@ -161,7 +161,7 @@ bool cart_load(char *cart) {
         x = x - ctx.rom_data[i] - 1;
     }
 
-    printf("\t Checksum : %2.2X (%s)\n", ctx.header->checksum, (x & 0xFF) ? "PASSED" : "FAILED");
+    printf("\t Checksum : %2.2X (%s)\n", ctx.header->checksum, (x & BYTE_MASK) ? "PASSED" : "FAILED");
 
     return true;
 }
@@ -211,7 +211,7 @@ bool Cart::load(const std::string &cart)
     file.close();
 
     // Get ROM header information (starting at 0x100)
-    rom_header* header = reinterpret_cast<rom_header*>(m_CartridgeMemory + 0x100);
+    const rom_header* header = reinterpret_cast<const rom_header*>(m_CartridgeMemory + 0x100);
     
     // Log cartridge info
     std::string title(header->title, 16);
@@ -251,18 +251,227 @@ bool Cart::unload() {
     return true;
 }
 
-bool Cart::isLoaded()
-{
-    return this->loaded;
+void Cart::initBanking() {
+    rom_header* header = reinterpret_cast<rom_header*>(m_CartridgeMemory + 0x100);
+    cartridgeType = header->type;
+    
+    // Initialize banking registers
+    currentROMBank = 1;
+    currentRAMBank = 0;
+    ramEnabled = false;
+    romBankingMode = true;
+
+    // Determine cartridge features
+    switch(cartridgeType) {
+        case 0x00: // ROM ONLY
+            hasRAM = false;
+            hasBattery = false;
+            break;
+        case 0x01: // MBC1
+            hasRAM = false;
+            hasBattery = false;
+            break;
+        case 0x02: // MBC1+RAM
+        case 0x03: // MBC1+RAM+BATTERY
+            hasRAM = true;
+            hasBattery = (cartridgeType == 0x03);
+            break;
+        // ... add more types as needed
+    }
 }
 
-BYTE Cart::read(WORD address)
-{
-    //TODO implement later
-    return 0;
+BYTE Cart::read(WORD address) {
+    if (!loaded) return 0xFF;
+
+    switch(cartridgeType) {
+        case 0x00: // ROM ONLY
+            return readROMOnly(address);
+        case 0x01: // MBC1
+        case 0x02: // MBC1+RAM
+        case 0x03: // MBC1+RAM+BATTERY
+            return readMBC1(address);
+        default:
+            LOG_WARNING("Unsupported cartridge type: " + std::to_string(cartridgeType));
+            return 0xFF;
+    }
 }
-void Cart::write(WORD address,BYTE data)
-{
-    //TODO implement later
+
+void Cart::write(WORD address, BYTE data) {
+    if (!loaded) return;
+
+    switch(cartridgeType) {
+        case 0x00: // ROM ONLY
+            writeROMOnly(address, data);
+            break;
+        case 0x01: // MBC1
+        case 0x02: // MBC1+RAM
+        case 0x03: // MBC1+RAM+BATTERY
+            writeMBC1(address, data);
+            break;
+        default:
+            LOG_WARNING("Unsupported cartridge type: " + std::to_string(cartridgeType));
+            break;
+    }
+}
+
+BYTE Cart::readROMOnly(WORD address) {
+    if (address < 0x8000) {
+        return m_CartridgeMemory[address];
+    }
+    return 0xFF;
+}
+
+void Cart::writeROMOnly(WORD address, BYTE data) {
+    // ROM only cartridges can't be written to
     return;
+}
+
+BYTE Cart::readMBC1(WORD address) {
+    if (address < 0x4000) {
+        // ROM Bank 0
+        return m_CartridgeMemory[address];
+    }
+    else if (address < 0x8000) {
+        // ROM Bank 1-127
+        WORD bankAddress = (address - 0x4000) + (currentROMBank * 0x4000);
+        return m_CartridgeMemory[bankAddress];
+    }
+    else if (address >= 0xA000 && address < 0xC000) {
+        // RAM Banks
+        if (ramEnabled && hasRAM) {
+            WORD ramAddress = (address - 0xA000) + (currentRAMBank * 0x2000);
+            return m_CartridgeRAM[ramAddress];
+        }
+    }
+    return 0xFF;
+}
+
+void Cart::writeMBC1(WORD address, BYTE data) {
+    if (address < 0x2000) {
+        // RAM Enable
+        ramEnabled = ((data & 0x0F) == 0x0A);
+    }
+    else if (address < 0x4000) {
+        // ROM Bank Number
+        BYTE bank = data & 0x1F;
+        if (bank == 0) bank = 1;
+        currentROMBank = (currentROMBank & 0x60) | bank;
+    }
+    else if (address < 0x6000) {
+        // RAM Bank Number or Upper ROM Bank Number
+        if (romBankingMode) {
+            currentROMBank = (currentROMBank & 0x1F) | ((data & 0x03) << 5);
+        } else {
+            currentRAMBank = data & 0x03;
+        }
+    }
+    else if (address < 0x8000) {
+        // ROM/RAM Mode Select
+        romBankingMode = !(data & 0x01);
+    }
+    else if (address >= 0xA000 && address < 0xC000) {
+        // RAM Banks
+        if (ramEnabled && hasRAM) {
+            WORD ramAddress = (address - 0xA000) + (currentRAMBank * 0x2000);
+            m_CartridgeRAM[ramAddress] = data;
+        }
+    }
+}
+// ...existing code...
+
+BYTE Cart::readMBC2(WORD address) {
+    if (address < 0x4000) {
+        // ROM Bank 0
+        return m_CartridgeMemory[address];
+    }
+    else if (address < 0x8000) {
+        // ROM Bank 1-15
+        WORD bankAddress = (address - 0x4000) + (currentROMBank * 0x4000);
+        return m_CartridgeMemory[bankAddress];
+    }
+    else if (address >= 0xA000 && address < 0xA200) {
+        // MBC2 has built-in RAM of 512 x 4 bits
+        if (ramEnabled) {
+            return m_CartridgeRAM[address - 0xA000] & 0x0F;
+        }
+    }
+    return 0xFF;
+}
+
+void Cart::writeMBC2(WORD address, BYTE data) {
+    if (address < 0x2000) {
+        // RAM Enable (lower bit of upper address byte must be 0)
+        if (!(address & 0x0100)) {
+            ramEnabled = ((data & 0x0F) == 0x0A);
+        }
+    }
+    else if (address < 0x4000) {
+        // ROM Bank Number (lower bit of upper address byte must be 1)
+        if (address & 0x0100) {
+            currentROMBank = data & 0x0F;
+            if (currentROMBank == 0) currentROMBank = 1;
+        }
+    }
+    else if (address >= 0xA000 && address < 0xA200) {
+        // RAM Banks
+        if (ramEnabled) {
+            m_CartridgeRAM[address - 0xA000] = data & 0x0F;
+        }
+    }
+}
+
+bool Cart::verifyChecksum() const {
+    // Use const_cast to maintain const correctness
+    const rom_header* header = reinterpret_cast<const rom_header*>(m_CartridgeMemory + 0x100);
+    WORD checksum = 0;
+    
+    for (WORD addr = HEADER_START; addr <= HEADER_END; addr++) {
+        checksum = checksum - m_CartridgeMemory[addr] - 1;
+    }
+
+    return (checksum & CHECKSUM_MASK) == header->checksum;
+}
+
+void Cart::saveRAM() const {
+    if (!hasBattery || !hasRAM || !loaded) {
+        return;
+    }
+
+    // Create save filename from ROM filename
+    std::string saveFile = "save.ram";  // You might want to derive this from the cartridge title
+    
+    std::ofstream file(saveFile, std::ios::binary);
+    if (!file) {
+        LOG_ERROR("Failed to create save file: " + saveFile);
+        return;
+    }
+
+    file.write(reinterpret_cast<const char*>(m_CartridgeRAM), MAX_RAM_SIZE);
+    if (file.fail()) {
+        LOG_ERROR("Failed writing save data");
+    } else {
+        LOG_INFO("Successfully saved RAM to: " + saveFile);
+    }
+}
+
+void Cart::loadRAM() {
+    if (!hasBattery || !hasRAM || !loaded) {
+        return;
+    }
+
+    // Load from save filename
+    std::string saveFile = "save.ram";  // Should match saveRAM()
+    
+    std::ifstream file(saveFile, std::ios::binary);
+    if (!file) {
+        LOG_WARNING("No save file found: " + saveFile);
+        return;
+    }
+
+    file.read(reinterpret_cast<char*>(m_CartridgeRAM), MAX_RAM_SIZE);
+    if (file.fail()) {
+        LOG_ERROR("Failed reading save data");
+    } else {
+        LOG_INFO("Successfully loaded RAM from: " + saveFile);
+    }
 }

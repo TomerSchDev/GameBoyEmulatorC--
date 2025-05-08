@@ -19,7 +19,7 @@
 
 // GameBoy Hardware Constants
 constexpr int CPU_CLOCK_SPEED = 4194304;  // 4.194304 MHz
-constexpr int TARGET_FPS = 60;
+constexpr int TARGET_FPS = 120;
 constexpr int CYCLES_PER_FRAME = CPU_CLOCK_SPEED / TARGET_FPS;
 
 
@@ -28,6 +28,18 @@ typedef unsigned char BYTE ;
 typedef char SIGNED_BYTE ;
 typedef unsigned short WORD ;
 typedef signed short SIGNED_WORD ;
+
+
+// Flag Masks
+constexpr BYTE FLAG_MASK_Z = 0x80;  // Zero Flag
+constexpr BYTE FLAG_MASK_N = 0x40;  // Subtract Flag
+constexpr BYTE FLAG_MASK_H = 0x20;  // Half Carry Flag
+constexpr BYTE FLAG_MASK_C = 0x10;  // Carry Flag
+
+// Bit Operation Constants
+constexpr BYTE LOWER_NIBBLE_MASK = 0x0F;
+constexpr BYTE UPPER_NIBBLE_MASK = 0xF0;
+constexpr BYTE BYTE_MASK = 0xFF;
 
 // Interrupt registers and flags
 constexpr WORD IF_REGISTER = 0xFF0F;    // Interrupt Flag Register

@@ -82,66 +82,120 @@ WORD CPU::readWord() {
 }
 
 // Keep stack operations
-void CPU::pushStack(WORD value) {
+void CPU::pushStackInternal(WORD value) {
     m_StackPointer.reg -= 2;
-    writeMemory(m_StackPointer.reg + 1, (value >> 8) & BYTE_MASK);
-    writeMemory(m_StackPointer.reg, value & BYTE_MASK);
+    writeMemory(m_StackPointer.reg, value & 0xFF);
+    writeMemory(m_StackPointer.reg + 1, (value >> 8) & 0xFF);
+    std::stringstream ss_push;
+    ss_push << "Pushed value to stack: 0x" << std::hex << std::setw(4) << std::setfill('0') << value;
+    LOG_DEBUG(ss_push.str());
 }
 
-WORD CPU::popStack() {
-    WORD value = (readMemory(m_StackPointer.reg + 1) << 8) | readMemory(m_StackPointer.reg);
+WORD CPU::popStackInternal() {
+    BYTE lo = readMemory(m_StackPointer.reg);
+    BYTE hi = readMemory(m_StackPointer.reg + 1);
     m_StackPointer.reg += 2;
-    return value;
+    WORD poppedValue = (hi << 8) | lo;
+    std::stringstream ss_pop;
+    ss_pop << "Popped value from stack: 0x" << std::hex << std::setw(4) << std::setfill('0') << poppedValue;
+    LOG_DEBUG(ss_pop.str());
+
+    // Add logging if desired
+    return poppedValue;
 }
 
-int CPU::ExecuteNextOpcode() {
-    if (checkInterrupts()) {
-        return 20;  // Interrupt handling takes 20 cycles
-    }
-
-    if (halted) {
-        return 4;   // HALT mode takes 4 cycles per step
-    }
-
-    BYTE opcode = readByte();
-    return ExecuteOpcode(opcode);
+// --- Flag Management Implementations ---
+void CPU::setFlags(BYTE new_f_value) {
+    // The lower 4 bits of the F register are always zero on Game Boy
+    m_RegisterAF.lo = new_f_value & 0xF0;
 }
 
+BYTE CPU::getFlags() const {
+    return m_RegisterAF.lo;
+}
+
+bool CPU::getFlagZ() const {
+    return (getFlags() & FLAG_Z_MASK) != 0;
+}
+
+bool CPU::getFlagN() const {
+    return (getFlags() & FLAG_N_MASK) != 0;
+}
+
+bool CPU::getFlagH() const {
+    return (getFlags() & FLAG_H_MASK) != 0;
+}
+
+bool CPU::getFlagC() const {
+    return (getFlags() & FLAG_C_MASK) != 0;
+}
 int CPU::ExecuteExtendedOpcode() {
-    BYTE opcode = readByte();
+    BYTE extendedOpcode = readByte(); // Fetches the byte after CB, increments PC
+
+    // Log the CB-prefixed instruction
+    // PC at this point is after reading the extendedOpcode.
+    // The address of the 0xCB instruction was (m_ProgramCounter - 2).
+    // The address of the extendedOpcode itself was (m_ProgramCounter - 1).
+    std::stringstream ss_log_cb;
+    ss_log_cb << "PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << (m_ProgramCounter - 2)
+              << " OP: 0xCB " << std::setw(2) << std::setfill('0') << static_cast<int>(extendedOpcode)
+              << " (" << CPUConstants::CB_OPCODE_TABLE[extendedOpcode].mnemonic << ")";
+    LOG_DEBUG(ss_log_cb.str());
+    const auto& entry = CPUConstants::CB_OPCODE_TABLE[extendedOpcode];
+
+    // All CB opcodes should be of type BIT.
+    if (entry.type != CPUConstants::InstructionType::BIT) {
+        std::stringstream error_ss;
+        error_ss << "CB Opcode 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(extendedOpcode)
+                 << " is not of type BIT. Mnemonic: " << entry.mnemonic;
+        LOG_ERROR(error_ss.str());
+        // It's an unknown/malformed CB instruction.
+        // m_ProgramCounter is already past this extendedOpcode.
+        return handleUnknownOpcode(extendedOpcode); // Or a specific value for unknown CB.
+    }
+
     auto& bitUnit = instructionUnits[static_cast<size_t>(CPUConstants::InstructionType::BIT)];
     if (bitUnit) {
-        return bitUnit->execute(opcode);
+        // The BitInstructions unit's execute method will handle the specific CB operation
+        // and should return the correct number of cycles, likely by consulting CB_OPCODE_TABLE[extendedOpcode].duration_cycles.
+        return bitUnit->execute(extendedOpcode);
     }
-    return handleUnknownOpcode(opcode);
+
+    std::stringstream error_ss_unit;
+    error_ss_unit << "BitInstruction unit missing for CB opcode: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(extendedOpcode);
+    LOG_ERROR(error_ss_unit.str());
+    return handleUnknownOpcode(extendedOpcode); // Pass the extended opcode
 }
 
+
 int CPU::ExecuteOpcode(BYTE opcode) {
-    logOpcode(opcode);
+    // Logging for primary opcodes is done in ExecuteNextOpcode.
+    // This function handles non-CB prefixed opcodes.
 
-    if (opcode == 0xCB) {
-        return ExecuteExtendedOpcode();
-    }
-    if (opcode == 0xED) {
-        // Log error and handle invalid prefix
-        LOG_ERROR("Invalid ED prefix opcode: 0x" + std::to_string(opcode));
-        
-        // Skip this instruction to avoid infinite loops
-        this->m_ProgramCounter++;  // Increment program counter to move past this instruction
-        return 4;  // Return a default cycle count
-    }
-    // Get instruction type from opcode map
-    auto instructionType = CPUConstants::getInstructionType(opcode);
-   
-    // Execute instruction if we have a valid type and unit
-    if (instructionType != CPUConstants::InstructionType::UNKNOWN) {
-        auto& unit = instructionUnits[static_cast<size_t>(instructionType)];
-        
-        if (unit) {
-            return unit->execute(opcode);
-        }
+    const auto& entry = CPUConstants::FULL_OPCODE_TABLE[opcode];
+    
+    // Check for UNKNOWN type (which would include 0xED if not defined or defined as UNKNOWN)
+    if (entry.type == CPUConstants::InstructionType::UNKNOWN) {
+        return handleUnknownOpcode(opcode);
     }
 
+    // Get the appropriate instruction unit
+    auto& unit = instructionUnits[static_cast<size_t>(entry.type)];
+    
+    if (unit) {
+        // The unit's execute method is responsible for:
+        // 1. Performing the instruction's logic.
+        // 2. Reading any additional operands using cpu.readByte() or cpu.readWord(), which advances PC.
+        // 3. Returning the total cycles taken for this instruction,
+        //    likely by using entry.duration_cycles and entry.duration_cycles_conditional.
+        return unit->execute(opcode);
+    }
+
+    // This case should ideally not be reached if all instruction types have corresponding units initialized.
+    std::stringstream error_ss_op_unit;
+    error_ss_op_unit << "Instruction unit missing for type: " << static_cast<int>(entry.type)
+                     << " for opcode: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(opcode);
+    LOG_ERROR(error_ss_op_unit.str());
     return handleUnknownOpcode(opcode);
 }
 
@@ -206,7 +260,7 @@ void CPU::handleJoypadInterrupt() {
 void CPU::serviceInterrupt(WORD address, BYTE interruptBit) {
     bool wasInterruptEnabled = interruptEnabled;
     interruptEnabled = false;
-    pushStack(m_ProgramCounter);
+    pushStackInternal(m_ProgramCounter);
     clearInterruptFlag(interruptBit);
     m_ProgramCounter = address;
     LOG_DEBUG("Servicing interrupt at: 0x" + std::to_string(address) + 
@@ -226,28 +280,61 @@ BYTE CPU::getPendingInterrupts() const {
     return flags & enable;
 }
 
+int CPU::ExecuteNextOpcode() {
+    if (halted) {
+        return 4; // HALT consumes 4 cycles per "do nothing"
+    }
+    if (pendingInterruptEnable) {
+        interruptEnabled = true;
+        pendingInterruptEnable = false;
+        LOG_DEBUG("Interrupts enabled after instruction");
+    }
+    if (checkInterrupts()) {
+        return 20;  // Interrupt handling consumes 20 cycles
+    }
+
+    BYTE opcode = readByte();
+    logOpcode(opcode);
+
+    if (opcode == 0xCB) {
+        // CB prefix indicates an extended opcode
+        LOG_INFO("Extended opcode detected: 0xCB");
+        return ExecuteExtendedOpcode();
+    } else {
+        // Handle normal opcode
+        LOG_INFO("Normal opcode detected: 0x" + std::to_string(opcode));
+        return ExecuteOpcode(opcode);
+    }
+}
 void CPU::logOpcode(BYTE opcode) {
     std::stringstream ss;
-    ss << "PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << (m_ProgramCounter - 1) 
+    // m_ProgramCounter was already incremented, so this shows where the instruction was fetched from
+    WORD opcode_addr = m_ProgramCounter - 1;
+    
+    ss << "PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << opcode_addr
        << " OP: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(opcode)
-       << " (" << CPUConstants::getInstructionDescription(opcode) << ")"; // Added description
+       << " (" << CPUConstants::getInstructionMnemonic(opcode) << ")"
+       << " B=" << static_cast<int>(getB()) 
+       << " D=" << static_cast<int>(getD())
+       << " HL=0x" << std::hex << getHL_ref().reg
+       << " A=" << static_cast<int>(getA());
     LOG_DEBUG(ss.str());
 }
 
 int CPU::handleUnknownOpcode(BYTE opcode) {
     std::stringstream ss;
-    // Correctly format the opcode as a 2-digit hex number
-    // Also, log the program counter (PC) where the unknown opcode was encountered
+    // (m_ProgramCounter - 1) is the address of the unknown 'opcode'
+    // because m_ProgramCounter was incremented by the readByte() that fetched it.
     ss << "Unknown opcode: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(opcode)
-       << " at PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << (m_ProgramCounter - 1); // m_ProgramCounter was already incremented by readByte()
+       << " at PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << (m_ProgramCounter - 1);
     LOG_ERROR(ss.str());
 
-    // Return a small number of cycles (e.g., 4, similar to NOP or HALT)
-    // instead of 0. Returning 0 can cause the main emulation loop in
-    // Emulator::update to get stuck if it continuously encounters unknown opcodes,
-    // as cyclesThisUpdate would not progress, potentially leading to the
-    // program counter incrementing indefinitely and causing a segmentation fault.
-    return 4;
+    // Return a default number of cycles for unknown opcodes.
+    // This prevents the emulator from getting stuck if it continuously encounters unknown opcodes.
+    // The PC has already been advanced by 1 (by the readByte that fetched this unknown opcode).
+    // No further PC increment is done here, assuming unknown opcodes are treated as 1-byte long
+    // as per the default OpcodeTableEntry constructor.
+    return CPUConstants::UNKNOWN_OPCODE_CYCLES;
 }
 
 // Remove the old CPU_8BIT_LOAD method as it's now handled by LoadInstructions class

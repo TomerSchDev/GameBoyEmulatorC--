@@ -7,20 +7,16 @@ const int SCREEN_HEIGHT = 480;
 
 int main(int argc, char* argv[]) {
     bool debugMode = false;
-    if (argc > 1) {
-        //check if the first argument is "debug" to enable debug mode
-        if (std::string(argv[1]) == "debug") {
-            // Enable debug mode
-            std::cout << "Debug mode enabled" << std::endl;
-            debugMode = true;
-        } 
-    }
+    
     auto logger = Logger::getInstance();
-    Logger::getInstance()->setLogLevel(LogLevel::INFO);;
+    logger->setLogLevel(LogLevel::INFO);
+    if (argc > 1) {
+        debugMode = true;
+    }
     if (debugMode) {
-        // Set the log level to DEBUG if debug mode is enabled
-        logger = Logger::getInstance("emulator_debug.log");
-        Logger::getInstance()->setLogLevel(LogLevel::DEBUG);
+        std::string logFileName = "emulator_" + std::string(argv[1]) + ".log";
+        auto new_log = Logger::getInstance(logFileName);
+        new_log->setLogLevel(LogLevel::DEBUG);
     }    
     // Create emulator instance
     Emulator emulator;

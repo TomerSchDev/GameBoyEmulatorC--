@@ -1,254 +1,218 @@
 #include "cpu_instructions/load_instructions.h"
 #include "../cpu.h"
-#include "../common.h"
+#include "../common.h"      // For logUnhandledOpcode
+#include "../cpu_constants.h" // For FULL_OPCODE_TABLE
 
-namespace {
-    // Load opcodes
-    constexpr BYTE LD_B_B = 0x40;
-    constexpr BYTE LD_B_C = 0x41;
-    constexpr BYTE LD_B_D = 0x42;
-    constexpr BYTE LD_B_E = 0x43;
-    constexpr BYTE LD_B_H = 0x44;
-    constexpr BYTE LD_B_L = 0x45;
-    constexpr BYTE LD_B_HL = 0x46;
-    constexpr BYTE LD_B_A = 0x47;
-    // ...similar patterns for C, D, E, H, L, and A
+// Helper to get a reference to an 8-bit register based on a 3-bit index
+// Index: 0:B, 1:C, 2:D, 3:E, 4:H, 5:L, 7:A. Index 6 is (HL) and handled separately.
+BYTE& LoadInstructions::getRegisterReference(BYTE reg_index) {
+    switch (reg_index) {
+        case 0: return cpu.getB();
+        case 1: return cpu.getC();
+        case 2: return cpu.getD();
+        case 3: return cpu.getE();
+        case 4: return cpu.getH();
+        case 5: return cpu.getL();
+        case 7: return cpu.getA();
+        default:
+            // This should not be called with reg_index == 6 or invalid index
+            LOG_ERROR("Invalid register index for getRegisterReference: " + std::to_string(reg_index));
+            static BYTE dummy = 0; // Should ideally throw or handle error more robustly
+            return dummy;
+    }
 }
+
+// Helper to get a value from an 8-bit register or (HL) based on a 3-bit index
+// Index: 0:B, 1:C, 2:D, 3:E, 4:H, 5:L, 6:(HL), 7:A
+BYTE LoadInstructions::getRegisterValue(BYTE reg_index, bool& is_hl_memory) {
+    is_hl_memory = false;
+    switch (reg_index) {
+        case 0: return cpu.getB();
+        case 1: return cpu.getC();
+        case 2: return cpu.getD();
+        case 3: return cpu.getE();
+        case 4: return cpu.getH();
+        case 5: return cpu.getL();
+        case 6: 
+            is_hl_memory = true;
+            return cpu.readMemory(cpu.getHL_ref().reg); // Read from (HL)
+        case 7: return cpu.getA();
+        default:
+            LOG_ERROR("Invalid register index for getRegisterValue: " + std::to_string(reg_index));
+            return 0; // Should ideally throw or handle error more robustly
+    }
+}
+
 
 int LoadInstructions::execute(BYTE opcode) {
-    // Regular register-to-register loads and LD r,(HL) / LD (HL),r
+    // LD r,r' ; LD r,(HL) ; LD (HL),r  (Opcodes 0x40 - 0x7F, excluding 0x76 HALT)
     if (opcode >= 0x40 && opcode <= 0x7F) {
-        // HALT instruction is 0x76, which is in this range but is not a load.
         if (opcode == 0x76) { // HALT instruction
-            // This should be handled by ControlInstructions, but as a safeguard:
-            logUnhandledOpcode(opcode); // Or specific log
-            return cpu.handleUnknownOpcode(opcode);
+            // This should be handled by ControlInstructions. If it reaches here, it's an issue.
+            LOG_WARNING("HALT (0x76) encountered in LoadInstructions unit.");
+            return cpu.handleUnknownOpcode(opcode); // Delegate to CPU's unknown opcode handler
         }
 
-        BYTE destReg = (opcode >> 3) & 0x07;
-        BYTE srcReg = opcode & 0x07;
-        
-        BYTE* dest_ptr = nullptr;
-        BYTE src_val;
+        BYTE dest_idx = (opcode >> 3) & 0x07; // Destination: 0-7 (B,C,D,E,H,L,(HL),A)
+        BYTE src_idx  = opcode & 0x07;        // Source: 0-7 (B,C,D,E,H,L,(HL),A)
+        bool src_is_hl_mem;
 
-        // Handle LD (HL),r (destination is (HL))
-        if (destReg == 6) { // Destination is (HL)
-            switch(srcReg) {
-                case 0: src_val = cpu.getBC().hi; break; // B
-                case 1: src_val = cpu.getBC().lo; break; // C
-                case 2: src_val = cpu.getDE().hi; break; // D
-                case 3: src_val = cpu.getDE().lo; break; // E
-                case 4: src_val = cpu.getHL().hi; break; // H
-                case 5: src_val = cpu.getHL().lo; break; // L
-                // case 6: // (HL) to (HL) is HALT (0x76), handled above or by Control unit.
-                // This case should not be reached if 0x76 is HALT.
-                // If it were LD (HL),(HL), it would be an invalid/unlikely instruction.
-                // For safety, we can log if srcReg is 6 here.
-                // if (srcReg == 6) { LOG_ERROR("LD (HL),(HL) attempted via generic path"); return cpu.handleUnknownOpcode(opcode); }
-                case 7: src_val = cpu.getAF().hi; break; // A
-                default: // Should not happen for valid opcodes 0x70-0x75, 0x77
-                    logUnhandledOpcode(opcode);
-                    return cpu.handleUnknownOpcode(opcode);
+        if (dest_idx == 6) { // Destination is (HL): LD (HL), r_src
+            BYTE src_val = getRegisterValue(src_idx, src_is_hl_mem); // src_is_hl_mem will be false here as src_idx won't be 6 for LD (HL),r
+            CPU_LD_HL_R(src_val);
+        } else { // Destination is a register r_dest
+            BYTE& dest_ref = getRegisterReference(dest_idx);
+            if (src_idx == 6) { // Source is (HL): LD r_dest, (HL)
+                CPU_LD_R_HL(dest_ref);
+            } else { // Source is a register r_src: LD r_dest, r_src
+                BYTE src_val = getRegisterValue(src_idx, src_is_hl_mem);
+                CPU_LD_R_R(dest_ref, src_val);
             }
-            return CPU_LD_HL_R(src_val);
         }
+    } else {
+        // Specific Load Instructions
+        switch (opcode) {
+            // 8-bit loads
+            case 0x06: CPU_LD_B_d8(); break;
+            case 0x0E: CPU_LD_C_d8(); break;
+            case 0x16: CPU_LD_D_d8(); break;
+            case 0x1E: CPU_LD_E_d8(); break;
+            case 0x26: CPU_LD_H_d8(); break;
+            case 0x2E: CPU_LD_L_d8(); break;
+            case 0x3E: CPU_LD_A_d8(); break;
+            case 0x36: CPU_LD_HL_d8(); break; // LD (HL), d8
 
-        // Handle LD r,r' and LD r,(HL) (destination is a register)
-        switch(destReg) {
-            case 0: dest_ptr = &cpu.getBC().hi; break; // B
-            case 1: dest_ptr = &cpu.getBC().lo; break; // C
-            case 2: dest_ptr = &cpu.getDE().hi; break; // D
-            case 3: dest_ptr = &cpu.getDE().lo; break; // E
-            case 4: dest_ptr = &cpu.getHL().hi; break; // H
-            case 5: dest_ptr = &cpu.getHL().lo; break; // L
-            // case 6: dest is (HL), handled above
-            case 7: dest_ptr = &cpu.getAF().hi; break; // A
-            default: // Should not happen
+            case 0x02: CPU_LD_BC_A(); break;
+            case 0x12: CPU_LD_DE_A(); break;
+            case 0x22: CPU_LD_HLI_A(); break;
+            case 0x32: CPU_LD_HLD_A(); break;
+
+            case 0x0A: CPU_LD_A_BC(); break;
+            case 0x1A: CPU_LD_A_DE(); break;
+            case 0x2A: CPU_LD_A_HLI(); break;
+            case 0x3A: CPU_LD_A_HLD(); break;
+
+            // 16-bit loads
+            case 0x01: CPU_LD_BC_d16(); break;
+            case 0x11: CPU_LD_DE_d16(); break;
+            case 0x21: CPU_LD_HL_d16(); break;
+            case 0x31: CPU_LD_SP_d16(); break;
+
+            // High RAM loads
+            case 0xF0: CPU_LD_A_FF00_N(); break;
+            case 0xE0: CPU_LD_FF00_N_A(); break;
+            case 0xF2: CPU_LD_A_FF00_C(); break;
+            case 0xE2: CPU_LD_FF00_C_A(); break;
+
+            // LD A,(nn) and LD (nn),A
+            case 0xFA: CPU_LD_A_NN(); break;
+            case 0xEA: CPU_LD_NN_A(); break;
+
+            // Misc 16-bit loads
+            case 0xF9: CPU_LD_SP_HL(); break;
+            case 0xF8: CPU_LDHL_SP_N(); break;
+            
+            // Opcodes like 0x08 LD (nn),SP are handled by specific cases if they exist
+            // Example: LD (a16), SP (Opcode 0x08)
+            case 0x08: {
+                WORD address = cpu.readWord();
+                cpu.writeMemory(address, cpu.getSP() & 0xFF); // Low byte of SP
+                cpu.writeMemory(address + 1, (cpu.getSP() >> 8) & 0xFF); // High byte of SP
+                break;
+            }
+
+            default:
                 logUnhandledOpcode(opcode);
-                return cpu.handleUnknownOpcode(opcode);
+                return cpu.handleUnknownOpcode(opcode); // Delegate if truly unknown to this unit
         }
-
-        // Get source value if destination is a register
-        switch(srcReg) {
-            case 0: src_val = cpu.getBC().hi; break; // B
-            case 1: src_val = cpu.getBC().lo; break; // C
-            case 2: src_val = cpu.getDE().hi; break; // D
-            case 3: src_val = cpu.getDE().lo; break; // E
-            case 4: src_val = cpu.getHL().hi; break; // H
-            case 5: src_val = cpu.getHL().lo; break; // L
-            case 6: return CPU_LD_R_HL(*dest_ptr); // LD r,(HL)
-            case 7: src_val = cpu.getAF().hi; break; // A
-            default: // Should not happen
-                logUnhandledOpcode(opcode);
-                return cpu.handleUnknownOpcode(opcode);
-        }
-        
-        // If we reached here, it's LD r,r'
-        return CPU_LD_R_R(*dest_ptr, src_val);
     }
+    return CPUConstants::FULL_OPCODE_TABLE[opcode].duration_cycles;
+}
 
-    // Special load instructions
-    switch(opcode) {
-        case 0x02: return CPU_LD_BC_A();   // LD (BC),A
-        case 0x12: return CPU_LD_DE_A();   // LD (DE),A
-        case 0x22: return CPU_LD_HLI_A();  // LD (HL+),A
-        case 0x32: return CPU_LD_HLD_A();  // LD (HL-),A
-        case 0x0A: return CPU_LD_A_BC();   // LD A,(BC)
-        case 0x1A: return CPU_LD_A_DE();   // LD A,(DE)
-        case 0x2A: return CPU_LD_A_HLI();  // LD A,(HL+)
-        case 0x3A: return CPU_LD_A_HLD();  // LD A,(HL-)
-        case 0xF0: return CPU_LD_A_FF00_N(); // LD A,($FF00+n)
-        case 0xE0: return CPU_LD_FF00_N_A(); // LD ($FF00+n),A
-        // 8-bit immediate loads
-        case 0x06: // LD B,d8
-            cpu.getBC().hi = cpu.readByte();
-            return 8;
-            
-        case 0x0E: // LD C,d8
-            cpu.getBC().lo = cpu.readByte();
-            return 8;
-            
-        case 0x3E: // LD A,d8
-            cpu.getAF().hi = cpu.readByte();
-            return 8;
-        
-        // 16-bit immediate loads
-        case 0x01: // LD BC,d16
-            cpu.getBC().reg = cpu.readWord();
-            return 12;
-            
-        case 0x21: // LD HL,d16
-            cpu.getHL().reg = cpu.readWord();
-            return 12;
-        // ADD MISSING LOAD INSTRUCTIONS HERE
-        case 0x36: // LD (HL), n - Store immediate value n into the memory location pointed to by HL
-            return CPU_LD_HL_n();
-        
-        case 0xEA: // LD (nn), A - Store value of A into memory at immediate address nn
-            return CPU_LD_nn_A();
-        case 0x31: // LD SP, nn - Load immediate 16-bit value into Stack Pointer
-            return CPU_LD_SP_nn();
-        case 0xE2: // LD (C), A - Store A to address $FF00+C
-            return CPU_LD_FF00_C_A();
-        
-        default: 
-            logUnhandledOpcode(opcode);
-            return cpu.handleUnknownOpcode(opcode); 
+// --- Helper Implementations (all void) ---
+
+void LoadInstructions::CPU_LD_R_R(BYTE& dest_reg_ref, BYTE src_val) {
+    dest_reg_ref = src_val;
+}
+
+void LoadInstructions::CPU_LD_R_HL(BYTE& dest_reg_ref) {
+    dest_reg_ref = cpu.readMemory(cpu.getHL_ref().reg);
+}
+
+void LoadInstructions::CPU_LD_HL_R(BYTE src_val) {
+    cpu.writeMemory(cpu.getHL_ref().reg, src_val);
+}
+
+// 8-bit immediate loads
+void LoadInstructions::CPU_LD_B_d8() { cpu.getB() = cpu.readByte(); }
+void LoadInstructions::CPU_LD_C_d8() { cpu.getC() = cpu.readByte(); }
+void LoadInstructions::CPU_LD_D_d8() { cpu.getD() = cpu.readByte(); }
+void LoadInstructions::CPU_LD_E_d8() { cpu.getE() = cpu.readByte(); }
+void LoadInstructions::CPU_LD_H_d8() { cpu.getH() = cpu.readByte(); }
+void LoadInstructions::CPU_LD_L_d8() { cpu.getL() = cpu.readByte(); }
+void LoadInstructions::CPU_LD_A_d8() { cpu.getA() = cpu.readByte(); }
+void LoadInstructions::CPU_LD_HL_d8() { cpu.writeMemory(cpu.getHL_ref().reg, cpu.readByte()); }
+
+// LD (rr), A
+void LoadInstructions::CPU_LD_BC_A() { cpu.writeMemory(cpu.getBC_ref().reg, cpu.getA()); }
+void LoadInstructions::CPU_LD_DE_A() { cpu.writeMemory(cpu.getDE_ref().reg, cpu.getA()); }
+void LoadInstructions::CPU_LD_HLI_A() { cpu.writeMemory(cpu.getHL_ref().reg++, cpu.getA()); }
+void LoadInstructions::CPU_LD_HLD_A() { cpu.writeMemory(cpu.getHL_ref().reg--, cpu.getA()); }
+
+// LD A, (rr)
+void LoadInstructions::CPU_LD_A_BC() { cpu.getA() = cpu.readMemory(cpu.getBC_ref().reg); }
+void LoadInstructions::CPU_LD_A_DE() { cpu.getA() = cpu.readMemory(cpu.getDE_ref().reg); }
+void LoadInstructions::CPU_LD_A_HLI() { cpu.getA() = cpu.readMemory(cpu.getHL_ref().reg++); }
+void LoadInstructions::CPU_LD_A_HLD() { cpu.getA() = cpu.readMemory(cpu.getHL_ref().reg--); }
+
+// 16-bit immediate loads
+void LoadInstructions::CPU_LD_BC_d16() { cpu.getBC_ref().reg = cpu.readWord(); }
+void LoadInstructions::CPU_LD_DE_d16() { cpu.getDE_ref().reg = cpu.readWord(); }
+void LoadInstructions::CPU_LD_HL_d16() { cpu.getHL_ref().reg = cpu.readWord(); }
+void LoadInstructions::CPU_LD_SP_d16() { cpu.setSP(cpu.readWord()); } // Assuming cpu.setSP()
+
+// High RAM loads
+void LoadInstructions::CPU_LD_A_FF00_N() { cpu.getA() = cpu.readMemory(0xFF00 + cpu.readByte()); }
+void LoadInstructions::CPU_LD_FF00_N_A() { cpu.writeMemory(0xFF00 + cpu.readByte(), cpu.getA()); }
+void LoadInstructions::CPU_LD_A_FF00_C() { cpu.getA() = cpu.readMemory(0xFF00 + cpu.getC()); }
+void LoadInstructions::CPU_LD_FF00_C_A() { cpu.writeMemory(0xFF00 + cpu.getC(), cpu.getA()); }
+
+// LD A,(nn) and LD (nn),A
+void LoadInstructions::CPU_LD_A_NN() { cpu.getA() = cpu.readMemory(cpu.readWord()); }
+void LoadInstructions::CPU_LD_NN_A() { cpu.writeMemory(cpu.readWord(), cpu.getA()); }
+
+// Misc 16-bit loads
+void LoadInstructions::CPU_LD_SP_HL() { cpu.setSP(cpu.getHL_ref().reg); }
+void LoadInstructions::CPU_LDHL_SP_N() {
+    BYTE n_signed = cpu.readByte();
+    WORD current_sp = cpu.getSP();
+    WORD result;
+    int temp_result = static_cast<int>(current_sp) + static_cast<signed char>(n_signed);
+    result = static_cast<WORD>(temp_result);
+    cpu.getHL_ref().reg = result;
+
+    // Flags for LD HL, SP+n: Z=0, N=0, H and C are set based on carry/borrow from bit 3/7 of SP+n
+    BYTE flags = 0;
+    // Half Carry: Carry from bit 3 to bit 4
+    if (((current_sp & 0x0F) + (n_signed & 0x0F)) > 0x0F) {
+        flags |= CPU::FLAG_H_MASK;
     }
-}
-int LoadInstructions::CPU_LD_SP_nn() {
-    // Read the 16-bit immediate value
-    WORD value = cpu.readWord();
+    // Carry: Carry from bit 7 to bit 8 (for the lower byte of SP)
+    // More accurately, for the whole 16-bit addition, if there's a carry out of bit 7 of the lower byte sum
+    // or carry out of bit 15 of the full sum.
+    // For SP+n, C is set if carry from bit 7, H if carry from bit 3.
+    // This applies to the addition of the lower byte of SP and n.
+    // Let's use the common definition:
+    // H: Set if carry from bit 3 of (SP & 0xFF) + n
+    // C: Set if carry from bit 7 of (SP & 0xFF) + n
+    // This seems to be for ADD SP,n. For LD HL,SP+n, flags are Z=0, N=0, H, C from SP+e.
+    // The H and C flags are set depending on the carry from bit 3 and bit 7 of the addition SP + n (signed).
+    // This is one of the few 16-bit operations that affect H and C.
+    // Z and N are reset.
+    // Check carry from bit 3 for H
+    if (((current_sp & 0x0F) + (static_cast<signed char>(n_signed) & 0x0F)) & 0x10) flags |= CPU::FLAG_H_MASK;
+    // Check carry from bit 7 for C
+    if (((current_sp & 0xFF) + (static_cast<signed char>(n_signed) & 0xFF)) & 0x100) flags |= CPU::FLAG_C_MASK;
     
-    // Set the stack pointer to this value
-    cpu.getSP().reg = value; // Assuming getSP() returns a reference to the SP register
-    
-    // This instruction takes 12 cycles (3 M-cycles)
-    return 12;
-}
-// And implement the function:
-int LoadInstructions::CPU_LD_FF00_C_A() {
-    // Calculate the address by adding C to 0xFF00
-    WORD address = 0xFF00 + cpu.getBC().lo;
-    
-    // Store A at the calculated address
-    cpu.writeMemory(address, cpu.getAF().hi);
-    
-    // This instruction takes 8 cycles
-    return 8;
-}
-int LoadInstructions::CPU_LD_HL_n() {
-    // Read the immediate byte value from PC
-    BYTE value = cpu.readByte();
-    
-    // Get the address from HL register
-    WORD address = cpu.getHL().reg; // or cpu.m_RegisterHL.reg; // Assuming m_RegisterHL is a member of CPU class
-    
-    // Write the value to memory at address HL
-    cpu.writeMemory(address, value);
-    
-    // This instruction takes 12 cycles (3 M-cycles)
-    return 12;
-}
-
-// LD (nn), A - Store value of A into memory at immediate address
-int LoadInstructions::CPU_LD_nn_A() {
-    // Read the 16-bit immediate address (low byte first, then high byte)
-    BYTE low = cpu.readByte();
-    BYTE high = cpu.readByte();
-    WORD address = (high << 8) | low;
-    
-    // Get the value from register A
-    BYTE value = cpu.getAF().hi; // Updated to use getAF() method
-    
-    // Write the value to memory at the specified address
-    cpu.writeMemory(address, value);
-    
-    // This instruction takes 16 cycles (4 M-cycles)
-    return 16;
-}
-int LoadInstructions::CPU_LD_R_R(BYTE& dest, BYTE src) {
-    dest = src;
-    return 4;
-}
-int LoadInstructions::CPU_LD_HL_R(BYTE src_val) {
-    cpu.writeMemory(cpu.getHL().reg, src_val);
-    return 8; // These instructions take 8 cycles
-}
-
-int LoadInstructions::CPU_LD_R_HL(BYTE& reg) {
-    reg = cpu.readMemory(cpu.getHL().reg);
-    return 8;
-}
-
-int LoadInstructions::CPU_LD_A_BC() {
-    cpu.getAF().hi = cpu.readMemory(cpu.getBC().reg);
-    return 8;
-}
-
-int LoadInstructions::CPU_LD_A_DE() {
-    cpu.getAF().hi = cpu.readMemory(cpu.getDE().reg);
-    return 8;
-}
-
-int LoadInstructions::CPU_LD_BC_A() {
-    cpu.writeMemory(cpu.getBC().reg, cpu.getAF().hi);
-    return 8;
-}
-
-int LoadInstructions::CPU_LD_DE_A() {
-    cpu.writeMemory(cpu.getDE().reg, cpu.getAF().hi);
-    return 8;
-}
-
-int LoadInstructions::CPU_LD_A_FF00_N() {
-    BYTE offset = cpu.readByte();
-    cpu.getAF().hi = cpu.readMemory(0xFF00 + offset);
-    return 12;
-}
-
-int LoadInstructions::CPU_LD_FF00_N_A() {
-    BYTE offset = cpu.readByte();
-    cpu.writeMemory(0xFF00 + offset, cpu.getAF().hi);
-    return 12;
-}
-
-int LoadInstructions::CPU_LD_HLI_A() {
-    cpu.writeMemory(cpu.getHL().reg++, cpu.getAF().hi);
-    return 8;
-}
-
-int LoadInstructions::CPU_LD_HLD_A() {
-    cpu.writeMemory(cpu.getHL().reg--, cpu.getAF().hi);
-    return 8;
-}
-
-int LoadInstructions::CPU_LD_A_HLI() {
-    cpu.getAF().hi = cpu.readMemory(cpu.getHL().reg++);
-    return 8;
-}
-
-int LoadInstructions::CPU_LD_A_HLD() {
-    cpu.getAF().hi = cpu.readMemory(cpu.getHL().reg--);
-    return 8;
+    cpu.setFlags(flags); // Z=0, N=0, H=?, C=?
 }

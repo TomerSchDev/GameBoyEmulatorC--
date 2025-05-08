@@ -3,7 +3,7 @@
 #include <fstream>
 #include <string>
 #include <ios>
-
+#include <vector>
 
 /*
 static const char *ROM_TYPES[] = {
@@ -220,23 +220,25 @@ bool Cart::load(const std::string &cart)
     LOG_INFO("ROM Size: " + std::to_string(32 << header->rom_size) + "KB");
     LOG_INFO("ROM Version: " + std::to_string(header->version));
 
-    // Verify checksum
-    WORD checksum = 0;
-    for (WORD addr = HEADER_START; addr <= HEADER_END; addr++) {
-        checksum = checksum - m_CartridgeMemory[addr] - 1;
-    }
-
-    if ((checksum & CHECKSUM_MASK) != 0) {
-        LOG_WARNING("ROM checksum verification failed - Expected: 0x" + 
-                   std::to_string(header->checksum) + 
-                   " Calculated: 0x" + std::to_string(checksum & CHECKSUM_MASK));
+    // Check for checksum
+    BYTE checksum = calculate_gameboy_header_checksum(m_CartridgeMemory);
+    if (checksum != header->checksum) {
+        LOG_WARNING("Checksum mismatch: expected " + std::to_string(header->checksum) + ", calculated " + std::to_string(checksum));
     } else {
-        LOG_INFO("ROM checksum verification passed");
+        LOG_INFO("Checksum verified successfully");
     }
 
     loaded = true;
     return true;
 }
+BYTE Cart::calculate_gameboy_header_checksum(const BYTE* cartridge_memory) {
+    BYTE checksum = 0; // BYTE is unsigned char, 8-bit unsigned arithmetic
+    for (int address = 0x0134; address <= 0x014C; ++address) {
+        checksum = checksum - cartridge_memory[address] - 1;
+    }
+    return checksum;
+}
+
 bool Cart::unload() {
     if (!loaded) {
         LOG_WARNING("Attempting to unload a cart that isn't loaded");

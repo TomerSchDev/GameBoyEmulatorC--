@@ -4,36 +4,50 @@
 #include <iomanip>
 
 void CPUInstructionBase::setZeroFlag(bool set) {
-    if (set) 
-        cpu.getAF().lo |= FLAG_MASK_Z;
-    else 
-        cpu.getAF().lo &= ~FLAG_MASK_Z;
+    BYTE flags = cpu.getFlags();
+    if (set) {
+        flags |= CPU::FLAG_Z_MASK;
+    } else {
+        flags &= ~CPU::FLAG_Z_MASK;
+    }
+    cpu.setFlags(flags);
 }
 
 void CPUInstructionBase::setSubtractFlag(bool set) {
-    if (set) 
-        cpu.getAF().lo |= FLAG_MASK_N;
-    else 
-        cpu.getAF().lo &= ~FLAG_MASK_N;
+    BYTE flags = cpu.getFlags();
+    if (set) {
+        flags |= CPU::FLAG_N_MASK;
+    } else {
+        flags &= ~CPU::FLAG_N_MASK;
+    }
+    cpu.setFlags(flags);
 }
 
 void CPUInstructionBase::setHalfCarryFlag(bool set) {
-    if (set) 
-        cpu.getAF().lo |= FLAG_MASK_H;
-    else 
-        cpu.getAF().lo &= ~FLAG_MASK_H;
+    BYTE flags = cpu.getFlags();
+    if (set) {
+        flags |= CPU::FLAG_H_MASK;
+    } else {
+        flags &= ~CPU::FLAG_H_MASK;
+    }
+    cpu.setFlags(flags);
 }
 
 void CPUInstructionBase::setCarryFlag(bool set) {
-    if (set) 
-        cpu.getAF().lo |= FLAG_MASK_C;
-    else 
-        cpu.getAF().lo &= ~FLAG_MASK_C;
+    BYTE flags = cpu.getFlags();
+    if (set) {
+        flags |= CPU::FLAG_C_MASK;
+    } else {
+        flags &= ~CPU::FLAG_C_MASK;
+    }
+    cpu.setFlags(flags);
 }
 
 bool CPUInstructionBase::checkFlag(BYTE flag) const {
-    return (cpu.getAF().lo & flag) != 0;
+    // Directly use the CPU's getFlags() method and check against the provided flag
+    return (cpu.getFlags() & flag) != 0;
 }
+
 void CPUInstructionBase::logUnhandledOpcode(BYTE opcode) {
     std::stringstream ss;
     ss << getClassName() << ": Unhandled opcode 0x" 

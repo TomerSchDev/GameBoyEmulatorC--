@@ -21,4 +21,5 @@ private:
     int CPU_RET();
     int CPU_RET_CC(bool condition);
     int CPU_RST(BYTE vector);
+    int CPU_CALL_nn();
 };

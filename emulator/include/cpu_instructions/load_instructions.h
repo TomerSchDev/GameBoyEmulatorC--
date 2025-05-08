@@ -25,4 +25,8 @@ private:
     int CPU_LD_HLI_A();    // Load (HL) from A and increment HL
     int CPU_LD_HLD_A();    // Load (HL) from A and decrement HL
     int CPU_LD_HL_R(BYTE src_val);  // Load HL from SP + n
+    int CPU_LD_HL_n(); // Load immediate value n into (HL)
+    int CPU_LD_nn_A(); // Load A into (nn)
+    int CPU_LD_SP_nn(); // Load immediate value nn into SP
+    int CPU_LD_FF00_C_A(); // Load A into ($FF00+C)
 };

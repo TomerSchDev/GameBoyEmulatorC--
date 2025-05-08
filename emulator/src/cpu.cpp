@@ -42,7 +42,7 @@ void CPU::Reset() {
     m_RegisterHL.reg = 0x014D;
     m_ProgramCounter = 0x0100;
     m_StackPointer.reg = 0xFFFE;
-    
+    LOG_INFO("Initial PC value: 0x" + std::to_string(m_ProgramCounter)); // Add this line
     halted = false;
     stopped = false;
     interruptEnabled = false;
@@ -122,13 +122,21 @@ int CPU::ExecuteOpcode(BYTE opcode) {
     if (opcode == 0xCB) {
         return ExecuteExtendedOpcode();
     }
-
+    if (opcode == 0xED) {
+        // Log error and handle invalid prefix
+        LOG_ERROR("Invalid ED prefix opcode: 0x" + std::to_string(opcode));
+        
+        // Skip this instruction to avoid infinite loops
+        this->m_ProgramCounter++;  // Increment program counter to move past this instruction
+        return 4;  // Return a default cycle count
+    }
     // Get instruction type from opcode map
     auto instructionType = CPUConstants::getInstructionType(opcode);
-    
+   
     // Execute instruction if we have a valid type and unit
     if (instructionType != CPUConstants::InstructionType::UNKNOWN) {
         auto& unit = instructionUnits[static_cast<size_t>(instructionType)];
+        
         if (unit) {
             return unit->execute(opcode);
         }

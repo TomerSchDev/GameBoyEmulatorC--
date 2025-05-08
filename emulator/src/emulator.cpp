@@ -49,6 +49,13 @@ bool Emulator::init() {
         LOG_ERROR("Renderer could not be created! SDL_Error: " + std::string(SDL_GetError()));
         return false;
     }
+    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, 
+        SCREEN_PIXELS_WIDTH, SCREEN_PIXELS_HEIGHT);
+    if (!texture) {
+        LOG_ERROR("Texture could not be created! SDL_Error: " + std::string(SDL_GetError()));
+        return false;
+    }
+
 
     // Initialize core components
     memoryController = std::make_shared<MemoryController>();

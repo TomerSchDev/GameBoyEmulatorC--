@@ -36,7 +36,60 @@ namespace CPUConstants {
         BYTE cycles;
         const char* description;  // Added description for debugging
     };
+    struct OpcodeTableEntry {
+        BYTE opcode_value;          // The actual opcode byte, e.g., 0x00 for NOP
 
+        const char* mnemonic;       // Instruction mnemonic, e.g., "NOP", "LD BC,d16"
+        
+        BYTE length_in_bytes;       // Length of the instruction in bytes (e.g., 1, 2, or 3)
+        
+        BYTE duration_cycles;       // Primary machine cycles for the instruction.
+                                    // For instructions with conditional timing (e.g., JR NZ,r8 takes 12 or 8 cycles),
+                                    // this would typically be the "condition met" or longer duration (e.g., 12).
+        
+        BYTE duration_cycles_conditional; // Secondary machine cycles for conditional timing (e.g., 8 for JR NZ,r8 if condition not met).
+                                          // Set to 0 if the instruction does not have conditional timing.
+        
+        // Detailed representation of how flags are affected.
+        // Characters can be 'Z', 'N', 'H', 'C' (indicating the flag is set based on the operation's result),
+        // '0' (flag is reset), '1' (flag is set), or '-' (flag is not affected).
+        char flag_Z_char; 
+        char flag_N_char;
+        char flag_H_char;
+        char flag_C_char;
+
+        // A 4-bit summary mask for affected flags, as per your request.
+        // Bit 3: Z (Zero flag) is affected (1 if flag_Z_char is not '-', 0 otherwise)
+        // Bit 2: N (Subtract flag) is affected (1 if flag_N_char is not '-', 0 otherwise)
+        // Bit 1: H (Half Carry flag) is affected (1 if flag_H_char is not '-', 0 otherwise)
+        // Bit 0: C (Carry flag) is affected (1 if flag_C_char is not '-', 0 otherwise)
+        BYTE affected_flags_summary_mask; 
+
+        InstructionType type;       // The general category of the instruction (e.g., LOAD, ALU, JUMP).
+
+        // Constructor to initialize all members and derive the summary mask
+        OpcodeTableEntry(BYTE op_val, const char* mnem, BYTE len, BYTE cyc, BYTE cyc_cond,
+                         char fZ, char fN, char fH, char fC, InstructionType instr_type)
+            : opcode_value(op_val), mnemonic(mnem), length_in_bytes(len),
+              duration_cycles(cyc), duration_cycles_conditional(cyc_cond),
+              flag_Z_char(fZ), flag_N_char(fN), flag_H_char(fH), flag_C_char(fC), 
+              type(instr_type) {
+            
+            affected_flags_summary_mask = 0;
+            if (flag_Z_char != '-') affected_flags_summary_mask |= (1 << 3);
+            if (flag_N_char != '-') affected_flags_summary_mask |= (1 << 2);
+            if (flag_H_char != '-') affected_flags_summary_mask |= (1 << 1);
+            if (flag_C_char != '-') affected_flags_summary_mask |= (1 << 0);
+        }
+
+        // Default constructor (useful for array initialization, though direct initialization is preferred)
+        OpcodeTableEntry() 
+            : opcode_value(0xFF), mnemonic("UNDEFINED"), length_in_bytes(0), 
+              duration_cycles(0), duration_cycles_conditional(0),
+              flag_Z_char('-'), flag_N_char('-'), flag_H_char('-'), flag_C_char('-'),
+              affected_flags_summary_mask(0), type(InstructionType::UNKNOWN) {}
+    };
+    
     const std::vector<OpcodeMapping> OPCODE_MAP = {
         // Control/Misc Instructions
         {0x00, InstructionType::CONTROL, 4, "NOP"},
@@ -407,5 +460,104 @@ namespace CPUConstants {
         constexpr BYTE SUB_L = 0x95;
         constexpr BYTE SUB_HL = 0x96;
         constexpr BYTE SUB_A = 0x97;
+
+        // CP r opcodes
+        constexpr BYTE CP_B = 0xB8;
+        constexpr BYTE CP_C = 0xB9;
+        constexpr BYTE CP_D = 0xBA;
+        constexpr BYTE CP_E = 0xBB;
+        constexpr BYTE CP_H = 0xBC;
+        constexpr BYTE CP_L = 0xBD;
+        constexpr BYTE CP_HL = 0xBE;
+        constexpr BYTE CP_A = 0xBF;
+        constexpr BYTE CP_N = 0xFE;
+
+        // ADD A,n opcode
+        constexpr BYTE ADD_A_N = 0xC6;
+
+        // ADC A,r opcodes
+        constexpr BYTE ADC_A_B = 0x88;
+        constexpr BYTE ADC_A_C = 0x89;
+        constexpr BYTE ADC_A_D = 0x8A;
+        constexpr BYTE ADC_A_E = 0x8B;
+        constexpr BYTE ADC_A_H = 0x8C;
+        constexpr BYTE ADC_A_L = 0x8D;
+        constexpr BYTE ADC_A_HL = 0x8E;
+        constexpr BYTE ADC_A_A = 0x8F;
+
+        // ADC A,n opcode
+        constexpr BYTE ADC_A_N = 0xCE;
+
+        // SUB n opcode
+        constexpr BYTE SUB_N = 0xD6;
+
+        // SBC A,r opcodes
+        constexpr BYTE SBC_A_B = 0x98;
+        constexpr BYTE SBC_A_C = 0x99;
+        constexpr BYTE SBC_A_D = 0x9A;
+        constexpr BYTE SBC_A_E = 0x9B;
+        constexpr BYTE SBC_A_H = 0x9C;
+        constexpr BYTE SBC_A_L = 0x9D;
+        constexpr BYTE SBC_A_HL = 0x9E;
+        constexpr BYTE SBC_A_A = 0x9F;
+
+        // SBC A,n opcode
+        constexpr BYTE SBC_A_N = 0xDE;
+
+        // AND r opcodes
+        constexpr BYTE AND_B = 0xA0;
+        constexpr BYTE AND_C = 0xA1;
+        constexpr BYTE AND_D = 0xA2;
+        constexpr BYTE AND_E = 0xA3;
+        constexpr BYTE AND_H = 0xA4;
+        constexpr BYTE AND_L = 0xA5;
+        constexpr BYTE AND_HL = 0xA6;
+        constexpr BYTE AND_A = 0xA7;
+
+        // AND n opcode
+        constexpr BYTE AND_N = 0xE6;
+
+        // OR r opcodes
+        constexpr BYTE OR_B = 0xB0;
+        constexpr BYTE OR_C = 0xB1;
+        constexpr BYTE OR_D = 0xB2;
+        constexpr BYTE OR_E = 0xB3;
+        constexpr BYTE OR_H = 0xB4;
+        constexpr BYTE OR_L = 0xB5;
+        constexpr BYTE OR_HL = 0xB6;
+        constexpr BYTE OR_A = 0xB7;
+
+        // OR n opcode
+        constexpr BYTE OR_N = 0xF6;
+
+        // XOR r opcodes
+        constexpr BYTE XOR_B = 0xA8;
+        constexpr BYTE XOR_C = 0xA9;
+        constexpr BYTE XOR_D = 0xAA;
+        constexpr BYTE XOR_E = 0xAB;
+        constexpr BYTE XOR_H = 0xAC;
+        constexpr BYTE XOR_L = 0xAD;
+        constexpr BYTE XOR_HL = 0xAE;
+        constexpr BYTE XOR_A = 0xAF;
+ 
+         // XOR n opcode
+         constexpr BYTE XOR_N = 0xEE;
+          // INC r opcodes
+        constexpr BYTE INC_B = 0x04;
+        constexpr BYTE INC_C = 0x0C;
+        constexpr BYTE INC_D = 0x14;
+        constexpr BYTE INC_E = 0x1C;
+        constexpr BYTE INC_H = 0x24;
+        constexpr BYTE INC_L = 0x2C;
+        constexpr BYTE INC_A = 0x3C;
+
+        // DEC r opcodes
+        constexpr BYTE DEC_B = 0x05;
+        constexpr BYTE DEC_C = 0x0D;
+        constexpr BYTE DEC_D = 0x15;
+        constexpr BYTE DEC_E = 0x1D;
+        constexpr BYTE DEC_H = 0x25;
+        constexpr BYTE DEC_L = 0x2D;
+        constexpr BYTE DEC_A = 0x3D;
     }
 }

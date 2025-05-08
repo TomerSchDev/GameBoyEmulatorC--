@@ -20,4 +20,7 @@ private:
     int CPU_8BIT_CP(BYTE reg1, BYTE reg2);
     int CPU_8BIT_INC(BYTE& reg);
     int CPU_8BIT_DEC(BYTE& reg);
+    void CPU_CP(BYTE value);
+    int CPU_ADD_HL_HL();
+    int CPU_DAA();
 };

@@ -78,7 +78,6 @@ public:
     WORD popFromStack() { return popStack(); }
     void pushToStack(WORD value) { pushStack(value); }
 
-
 private:
     // Initialize instruction units
     void initInstructionUnits();

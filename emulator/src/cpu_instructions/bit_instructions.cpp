@@ -25,8 +25,6 @@ int BitInstructions::execute(BYTE opcode) {
             return 8; // Default cycles
     }
 
-    BYTE original_target_value = target_value; // For BIT, which doesn't modify
-
     // Determine operation type and execute
     // Note: target_value is passed by value to BIT, by reference to others that modify it.
     if (opcode >= 0x40 && opcode <= 0x7F) { // BIT b, r

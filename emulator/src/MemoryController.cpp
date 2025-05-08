@@ -16,6 +16,10 @@ MemoryController::MemoryController()
 }
 
 BYTE MemoryController::read(WORD address) const {
+    if (address > 0xFFFF) {
+        LOG_WARNING("Read attempt from restricted memory area: 0x" + std::to_string(address));
+        return 0xFF; // Return a default value
+    }
     auto region = getMemoryRegion(address);
     BYTE value = BYTE_MASK;
 
@@ -171,7 +175,10 @@ void MemoryController::write(WORD address, BYTE data) {
        << " Address: 0x" << std::hex << std::setw(4) << std::setfill('0') << address
        << " Data: 0x" << std::setw(2) << static_cast<int>(data);
     LOG_DEBUG(ss.str());
-
+    if (address > 0xFFFF) {
+        LOG_WARNING("Write attempt to restricted memory area: 0x" + std::to_string(address));
+        return; // Skip the write operation
+    }
     switch (region) {
         case MemoryRegion::JOYPAD_REGISTER:
         {

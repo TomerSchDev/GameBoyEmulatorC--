@@ -6,6 +6,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Basic type definitions
+using BYTE = uint8_t;    // 8-bit unsigned
+using WORD = uint16_t;   // 16-bit unsigned
+using DWORD = uint32_t;  // 32-bit unsigned (if needed)
+using SBYTE = int8_t;    // 8-bit signed (if needed)
+
 //screen dims
 #define SCREEN_PIXELS_WIDTH 160
 #define SCREEN_PIXELS_HEIGHT 144
@@ -13,21 +19,19 @@
 //global constants
 #define SCREEN_SCALE 4
 
-#define WIDNOW_WIDTH SCREEN_PIXELS_WIDTH * SCREEN_SCALE
+#define WINDOW_WIDTH SCREEN_PIXELS_WIDTH * SCREEN_SCALE
 #define WINDOW_HEIGHT SCREEN_PIXELS_HEIGHT * SCREEN_SCALE
 
 
 // GameBoy Hardware Constants
+constexpr int RAM_SIZE = 0x10000;  // 64KB
+
 constexpr int CPU_CLOCK_SPEED = 4194304;  // 4.194304 MHz
 constexpr int TARGET_FPS = 120;
 constexpr int CYCLES_PER_FRAME = CPU_CLOCK_SPEED / TARGET_FPS;
 
 
-//types
-typedef unsigned char BYTE ;
-typedef char SIGNED_BYTE ;
-typedef unsigned short WORD ;
-typedef signed short SIGNED_WORD ;
+
 
 
 // Flag Masks

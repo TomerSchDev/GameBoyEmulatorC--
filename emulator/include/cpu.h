@@ -1,12 +1,22 @@
 #pragma once
+#include "common.h"  // Add this at the top
+
 #include <memory>
-#include <array>
+#include <string> // Required for std::string in OpcodeInfo
 #include "memory_controller.h"
 #include "logger.h"
-#include "cpu_constants.h"
-#include "cpu_instructions/cpu_instruction_base.h"
+// #include "cpu_constants.h" // Assuming this provides general constants if needed, but not opcode tables
+#include "OpcodeTables.h" // For OpcodeInfo and OpcodeTables class
 
-union Register {
+// Forward declaration
+class MemoryController;
+
+namespace GB {
+
+// Union for CPU register pairs (e.g., AF, BC, DE, HL, SP)
+// Renamed from 'Register' in your original cpu.h to 'RegisterPair'
+// to avoid conflict with GB::Register enum from OpcodeTables.h
+union RegisterPair {
     WORD reg;
     struct {
         BYTE lo;
@@ -14,127 +24,120 @@ union Register {
     };
 };
 
-class MemoryController;
-class CPUInstructionBase;
 class CPU {
-    public:
-        static const BYTE FLAG_Z_BIT = 7; // Zero Flag
-        static const BYTE FLAG_N_BIT = 6; // Subtract Flag
-        static const BYTE FLAG_H_BIT = 5; // Half Carry Flag
-        static const BYTE FLAG_C_BIT = 4; // Carry Flag
+public:
+    // --- Public Constants for Flags ---
+    static const BYTE FLAG_Z_BIT = 7; // Zero Flag bit position
+    static const BYTE FLAG_N_BIT = 6; // Subtract Flag bit position
+    static const BYTE FLAG_H_BIT = 5; // Half Carry Flag bit position
+    static const BYTE FLAG_C_BIT = 4; // Carry Flag bit position
 
-        // Flag masks
-        static const BYTE FLAG_Z_MASK = (1 << FLAG_Z_BIT);
-        static const BYTE FLAG_N_MASK = (1 << FLAG_N_BIT);
-        static const BYTE FLAG_H_MASK = (1 << FLAG_H_BIT);
-        static const BYTE FLAG_C_MASK = (1 << FLAG_C_BIT);
-    private:
-        // Memory Interface (initialized first)
-        std::shared_ptr<MemoryController> memoryController;
+    // Flag masks for easy manipulation
+    static const BYTE FLAG_Z_MASK = (1 << FLAG_Z_BIT);
+    static const BYTE FLAG_N_MASK = (1 << FLAG_N_BIT);
+    static const BYTE FLAG_H_MASK = (1 << FLAG_H_BIT);
+    static const BYTE FLAG_C_MASK = (1 << FLAG_C_BIT);
 
-        // CPU instruction units (initialized next)
-        std::array<std::unique_ptr<CPUInstructionBase>, 
-                static_cast<size_t>(CPUConstants::InstructionType::UNKNOWN)> instructionUnits;
+private:
+    // --- CPU Members ---
+    std::shared_ptr<MemoryController> memoryController; // Interface to memory
 
-        // CPU Registers
-        Register m_RegisterAF;  // Accumulator & Flags
-        Register m_RegisterBC;  // General Purpose
-        Register m_RegisterDE;  // General Purpose
-        Register m_RegisterHL;  // General Purpose/Memory Pointer
-        WORD m_ProgramCounter; // Program Counter
-        Register m_StackPointer; // Stack Pointer
+    // CPU Registers
+    RegisterPair m_RegisterAF;  // Accumulator (A) & Flags (F)
+    RegisterPair m_RegisterBC;  // General Purpose Register Pair BC
+    RegisterPair m_RegisterDE;  // General Purpose Register Pair DE
+    RegisterPair m_RegisterHL;  // General Purpose Register Pair HL / Memory Pointer
+    WORD m_ProgramCounter;      // Program Counter (PC)
+    RegisterPair m_StackPointer;  // Stack Pointer (SP)
 
-        // CPU State (initialized last)
-        bool halted;
-        bool stopped;
-        bool interruptEnabled;
-        bool pendingInterruptEnable;
+    // CPU State
+    bool halted;                // Is CPU in HALT state?
+    bool stopped;               // Is CPU in STOP state?
+    bool interruptEnabled;      // Master Interrupt Enable Flag (IME)
+    bool pendingInterruptEnable; // EI instruction sets this to enable interrupts after the *next* instruction
 
-    public:
-        // Constructor and Destructor
-        CPU(std::shared_ptr<MemoryController> memory);
-        ~CPU() = default;
+    OpcodeTables& opcodeTables; // Reference to the singleton opcode table instance
 
-        // Memory Access
-        BYTE readMemory(WORD address) const;
-        void writeMemory(WORD address, BYTE data);
-        BYTE readByte();
-        WORD readWord();
+public:
+    // --- Constructor & Destructor ---
+    CPU(std::shared_ptr<MemoryController> memory);
+    ~CPU() = default;
 
-        // Register Access (for instruction units)
-        // Provide access to individual registers if needed by instruction units
-        BYTE& getA() { return m_RegisterAF.hi; }
-        BYTE& getB() { return m_RegisterBC.hi; }
-        BYTE& getC() { return m_RegisterBC.lo; }
-        BYTE& getD() { return m_RegisterDE.hi; }
-        BYTE& getE() { return m_RegisterDE.lo; }
-        BYTE& getH() { return m_RegisterHL.hi; }
-        BYTE& getL() { return m_RegisterHL.lo; }
+    // --- Core CPU Operations ---
+    int ExecuteNextOpcode(); // Fetches, decodes, and executes the next opcode
+    void Reset();            // Resets CPU to its initial state
+    void RequestInterrupt(BYTE interruptBit); // Request an interrupt (sets bit in IF register)
 
-        // Access to register pairs
-        Register& getAF_ref() { return m_RegisterAF; } // If direct access to pair is needed
-        Register& getBC_ref() { return m_RegisterBC; }
-        Register& getDE_ref() { return m_RegisterDE; }
-        Register& getHL_ref() { return m_RegisterHL; }
+    // --- Memory Access ---
+    // These are used by instruction implementations
+    BYTE readMemory(WORD address) const;
+    void writeMemory(WORD address, BYTE data);
+    BYTE readBytePC(); // Reads byte at current PC and increments PC
+    WORD readWordPC(); // Reads word at current PC and increments PC by 2
+
+    // --- Register Access ---
+    // Getters for individual 8-bit registers
+    BYTE& getA() { return m_RegisterAF.hi; }
+    BYTE& getF() { return m_RegisterAF.lo; } // Note: Lower 4 bits of F are always 0
+    BYTE& getB() { return m_RegisterBC.hi; }
+    BYTE& getC() { return m_RegisterBC.lo; }
+    BYTE& getD() { return m_RegisterDE.hi; }
+    BYTE& getE() { return m_RegisterDE.lo; }
+    BYTE& getH() { return m_RegisterHL.hi; }
+    BYTE& getL() { return m_RegisterHL.lo; }
+
+    // Getters/Setters for 16-bit register pairs
+    WORD getAF() const { return m_RegisterAF.reg; }
+    void setAF(WORD value) { m_RegisterAF.reg = value; m_RegisterAF.lo &= 0xF0; /* Ensure lower 4 bits of F are zero */ }
+    WORD getBC() const { return m_RegisterBC.reg; }
+    void setBC(WORD value) { m_RegisterBC.reg = value; }
+    WORD getDE() const { return m_RegisterDE.reg; }
+    void setDE(WORD value) { m_RegisterDE.reg = value; }
+    WORD getHL() const { return m_RegisterHL.reg; }
+    void setHL(WORD value) { m_RegisterHL.reg = value; }
+
+    WORD getPC() const { return m_ProgramCounter; }
+    void setPC(WORD value) { m_ProgramCounter = value; }
+    WORD getSP() const { return m_StackPointer.reg; }
+    void setSP(WORD value) { m_StackPointer.reg = value; }
+
+    // --- Flag Management ---
+    void setFlagZ(bool value);
+    void setFlagN(bool value);
+    void setFlagH(bool value);
+    void setFlagC(bool value);
+
+    bool getFlagZ() const;
+    bool getFlagN() const;
+    bool getFlagH() const;
+    bool getFlagC() const;
+
+    // --- CPU State Control ---
+    void setHaltState(bool state) { halted = state; }
+    bool isHalted() const { return halted; }
+    void setStopState(bool state) { stopped = state; } // Note: STOP also involves LCD behavior
+    bool isStopped() const { return stopped; }
+    void enableInterrupts() { interruptEnabled = true; } // For EI instruction effect
+    void disableInterrupts() { interruptEnabled = false;} // For DI instruction effect
+    void scheduleInterruptEnable() { pendingInterruptEnable = true; } // For EI instruction
+    bool isInterruptMasterEnabled() const { return interruptEnabled; }
+    int handleInterrupts();    // Checks and services pending interrupts
 
 
-        WORD& getPC() { return m_ProgramCounter; }
-        Register& getSP_ref() { return m_StackPointer; } // If direct access to pair is needed
-        WORD getSP() const { return m_StackPointer.reg; }
-        void setSP(WORD value) { m_StackPointer.reg = value; }
-        // --- Flag Management ---
-        // Primary public interface for flags
-        void setFlags(BYTE new_f_value);
-        BYTE getFlags() const;
-        
-        // Helper getters using the primary getFlags()
-        bool getFlagZ() const;
-        bool getFlagN() const;
-        bool getFlagH() const;
-        bool getFlagC() const;
 
-        // Main CPU Operations
-        int ExecuteNextOpcode();
-        void Reset();
-        void handleInterrupts(BYTE pendingInterrupts);
-        int handleUnknownOpcode(BYTE opcode);
+    // --- Stack Operations ---
+    // Used by PUSH, POP, CALL, RET instructions
+    void pushStackWord(WORD value);
+    WORD popStackWord();
 
-        // State control methods
-        void setHaltState(bool state) { halted = state; }
-        void setStopState(bool state) { stopped = state; }
-        void setInterruptState(bool state) { interruptEnabled = state; }
-        void setPendingInterruptEnable(bool state) { pendingInterruptEnable = state; }
-        bool isHalted() const { return halted; }
-        bool isStopped() const { return stopped; }
-        bool isInterruptEnabled() const { return interruptEnabled; }
-        bool hasPendingInterruptEnable() const { return pendingInterruptEnable; }
+private:
+    // --- Internal Helper Methods ---
+    int processInstruction(const OpcodeInfo& info); // Dispatches to specific instruction handlers
+    int executePrefixedInstruction(); // Handles CB-prefixed instructions
+    int handleUnknownOpcode(BYTE opcode, bool prefixed); // Handles undefined opcodes
 
-        // Stack operations
-        WORD popFromStack() { return popStackInternal(); }
-        void pushToStack(WORD value) { pushStackInternal(value);}
-
-    private:
-        // Initialize instruction units
-        void initInstructionUnits();
-
-        // Stack Operations
-        WORD popStackInternal();
-        void pushStackInternal(WORD value);
-
-        // Interrupt Handling
-        void serviceInterrupt(WORD address, BYTE interruptBit);
-        bool checkInterrupts();
-        void handleVBlankInterrupt();
-        void handleLCDInterrupt();
-        void handleTimerInterrupt();
-        void handleJoypadInterrupt();
-        void clearInterruptFlag(BYTE bit);
-        BYTE getPendingInterrupts() const;
-
-        // Opcode Execution
-        int ExecuteOpcode(BYTE opcode);
-        int ExecuteExtendedOpcode();
-
-        // Debug Helpers
-        void logOpcode(BYTE opcode);
+    // Debug Helpers
+    void logOpcodeExecution(BYTE opcode_val, bool is_prefixed, const OpcodeInfo& info, WORD current_pc_before_fetch);
 };
+
+} // namespace GB

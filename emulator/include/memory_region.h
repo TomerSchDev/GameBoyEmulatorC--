@@ -1,6 +1,6 @@
 #pragma once
-#include <string>
 #include <common.h>
+#include <string>
 enum class MemoryRegion {
     ROM_BANK_0,          // 0x0000 - 0x3FFF
     ROM_BANK_N,          // 0x4000 - 0x7FFF

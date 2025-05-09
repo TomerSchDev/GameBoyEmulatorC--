@@ -14,7 +14,7 @@ int main(int argc, char* argv[]) {
         debugMode = true;
     }
     if (debugMode) {
-        std::string logFileName = "emulator_" + std::string(argv[1]) + ".log";
+        std::string logFileName = "emulator_" + std::string(argv[1]) + ".txt";
         auto new_log = Logger::getInstance(logFileName);
         new_log->setLogLevel(LogLevel::DEBUG);
     }    

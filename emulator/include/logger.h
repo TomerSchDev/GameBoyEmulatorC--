@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <fstream>
+#include "common.h"  // Add this at the top
 
 enum class LogLevel {
     DEBUG,

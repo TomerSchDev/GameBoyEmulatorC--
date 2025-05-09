@@ -4,7 +4,7 @@
 #include <string>
 #include <ios>
 #include <vector>
-
+#include <iomanip>
 /*
 static const char *ROM_TYPES[] = {
     "ROM ONLY",
@@ -170,48 +170,50 @@ bool cart_load(char *cart) {
 Cart::Cart()
 {
     this->loaded=false;
-    memset(this->m_CartridgeMemory,0,sizeof(this->m_CartridgeMemory));
 }
 
 Cart::~Cart()
 {
     this->unload();
-    memset(this->m_CartridgeMemory,0,sizeof(this->m_CartridgeMemory));
+    this->m_CartridgeMemory.clear();
 }
 
-bool Cart::load(const std::string &cart)
+bool Cart::load(const std::string &filename)
 {
-    LOG_INFO("Attempting to load ROM: " + cart);
+    LOG_INFO("Attempting to load ROM: " + filename);
 
-    std::ifstream file(cart, std::ios::binary);
+    std::ifstream file(filename, std::ios::binary);
     if (!file) {
-        LOG_ERROR("Failed to open ROM file: " + cart);
+        LOG_ERROR("Failed to open ROM file: " + filename);
         return false;
     }
 
-    // Get file size
     file.seekg(0, std::ios::end);
-    std::streamsize size = file.tellg();
-    file.seekg(0, std::ios::beg);
-
+    std::streampos fileSize = file.tellg();
+    if (fileSize <= 0) {
+        LOG_ERROR("Invalid ROM file size: " + std::to_string(fileSize));
+        loaded = false;
+        return false;
+    }
+    LOG_INFO("Expected ROM file size: " + std::to_string(fileSize) + " bytes"); // Log expected size
     // Check if ROM size is valid
-    if (static_cast<size_t>(size) > sizeof(m_CartridgeMemory)) {
-        LOG_ERROR("ROM file too large: " + std::to_string(size) + " bytes");
+    m_CartridgeMemory.resize(fileSize);
+    file.seekg(0, std::ios::beg);
+    file.read(reinterpret_cast<char*>(m_CartridgeMemory.data()), fileSize);
+
+    std::streamsize bytesRead = file.gcount(); // Get actual bytes read
+    LOG_INFO("Bytes actually read from ROM: " + std::to_string(bytesRead)); // Log actual bytes read
+
+    if (!file || bytesRead != fileSize) { // Check if read was successful and complete
+        LOG_ERROR("Failed to read ROM file completely: " + filename + " (Read " + std::to_string(bytesRead) + " bytes)");
+        // Optionally clear memory or handle error more robustly
+        m_CartridgeMemory.assign(m_CartridgeMemory.size(), 0xFF); // Fill with a known value on error?
+        loaded = false;
         return false;
     }
-
-    // Read ROM data
-    file.read(reinterpret_cast<char*>(m_CartridgeMemory), size);
-    if (file.fail()) {
-        LOG_ERROR("Failed reading ROM data");
-        file.close();
-        return false;
-    }
-
-    file.close();
-
+     LOG_INFO("ROM file read successfully.");
     // Get ROM header information (starting at 0x100)
-    const rom_header* header = reinterpret_cast<const rom_header*>(m_CartridgeMemory + 0x100);
+    const rom_header* header = reinterpret_cast<const rom_header*>(m_CartridgeMemory.data() + 0x100);
     
     // Log cartridge info
     std::string title(header->title, 16);
@@ -229,11 +231,23 @@ bool Cart::load(const std::string &cart)
     }
 
     loaded = true;
+    LOG_INFO("Cartridge loaded successfully");
+    LOG_DEBUG("Writing rom data to file for debugging");
+    std::ofstream debugFile("rom_dump.txt", std::ios::binary);
+    //translate to hex
+    for (size_t i = 0; i < m_CartridgeMemory.size(); ++i) {
+        debugFile << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(m_CartridgeMemory[i]) << " ";
+        if ((i + 1) % 16 == 0) {
+            debugFile << "\n";
+        }
+    }
+    debugFile.close();
+    LOG_INFO("ROM data written to rom_dump.txt for debugging purposes.");
     return true;
 }
-BYTE Cart::calculate_gameboy_header_checksum(const BYTE* cartridge_memory) {
+BYTE Cart::calculate_gameboy_header_checksum(const std::vector<unsigned char>& cartridge_memory)const {
     BYTE checksum = 0; // BYTE is unsigned char, 8-bit unsigned arithmetic
-    for (int address = 0x0134; address <= 0x014C; ++address) {
+    for (size_t address = 0x0134; address <= 0x014C; ++address) {
         checksum = checksum - cartridge_memory[address] - 1;
     }
     return checksum;
@@ -246,7 +260,7 @@ bool Cart::unload() {
     }
 
     // Clear cartridge memory
-    memset(m_CartridgeMemory, 0, sizeof(m_CartridgeMemory));
+    m_CartridgeMemory.clear();
     loaded = false;
     
     LOG_INFO("Cartridge unloaded successfully");
@@ -254,7 +268,13 @@ bool Cart::unload() {
 }
 
 void Cart::initBanking() {
-    rom_header* header = reinterpret_cast<rom_header*>(m_CartridgeMemory + 0x100);
+    if (!loaded) {
+        LOG_ERROR("Cannot initialize banking: ROM not loaded");
+        return;
+    }
+    // Initialize banking registers
+    BYTE* cartridgeMemory = m_CartridgeMemory.data();
+    rom_header* header = reinterpret_cast<rom_header*>(cartridgeMemory + 0x100);
     cartridgeType = header->type;
     
     // Initialize banking registers
@@ -283,15 +303,22 @@ void Cart::initBanking() {
 }
 
 BYTE Cart::read(WORD address) {
-    if (!loaded) return 0xFF;
-
+    if (!loaded || address >= m_CartridgeMemory.size()) {
+        LOG_ERROR("Cartridge read error: Address 0x" + std::to_string(address) + " out of bounds or ROM not loaded.");
+        return 0xFF; // Return a default value on error
+    }
+    BYTE value;
     switch(cartridgeType) {
         case 0x00: // ROM ONLY
-            return readROMOnly(address);
+            value = readROMOnly(address);
+            LOG_DEBUG("Read from ROM ONLY: Address 0x" + std::to_string(address) + " Value: 0x" + std::to_string(value));
+            return value;
         case 0x01: // MBC1
         case 0x02: // MBC1+RAM
         case 0x03: // MBC1+RAM+BATTERY
-            return readMBC1(address);
+            value = readMBC1(address);
+            LOG_DEBUG("Read from MBC1: Address 0x" + std::to_string(address) + " Value: 0x" + std::to_string(value));
+            return value;
         default:
             LOG_WARNING("Unsupported cartridge type: " + std::to_string(cartridgeType));
             return 0xFF;
@@ -424,7 +451,8 @@ void Cart::writeMBC2(WORD address, BYTE data) {
 
 bool Cart::verifyChecksum() const {
     // Use const_cast to maintain const correctness
-    const rom_header* header = reinterpret_cast<const rom_header*>(m_CartridgeMemory + 0x100);
+    BYTE *romData = const_cast<BYTE*>(m_CartridgeMemory.data());
+    const rom_header* header = reinterpret_cast<const rom_header*>( romData+ 0x100);
     WORD checksum = 0;
     
     for (WORD addr = HEADER_START; addr <= HEADER_END; addr++) {
@@ -447,8 +475,9 @@ void Cart::saveRAM() const {
         LOG_ERROR("Failed to create save file: " + saveFile);
         return;
     }
-
-    file.write(reinterpret_cast<const char*>(m_CartridgeRAM), MAX_RAM_SIZE);
+    // Save RAM data
+    
+    file.write(reinterpret_cast<const char*>(m_CartridgeRAM.data()), m_CartridgeRAM.size());
     if (file.fail()) {
         LOG_ERROR("Failed writing save data");
     } else {
@@ -470,7 +499,7 @@ void Cart::loadRAM() {
         return;
     }
 
-    file.read(reinterpret_cast<char*>(m_CartridgeRAM), MAX_RAM_SIZE);
+    file.read(reinterpret_cast<char*>(m_CartridgeRAM.data()), m_CartridgeRAM.size());
     if (file.fail()) {
         LOG_ERROR("Failed reading save data");
     } else {

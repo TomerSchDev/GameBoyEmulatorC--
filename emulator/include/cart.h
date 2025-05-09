@@ -1,7 +1,8 @@
 #pragma once
-#include <common.h>
+#include "common.h"  // Add this at the top
 #include <string>
 #include <vector>
+
 // ROM header structure
 struct rom_header { // You can rename this back to rom_header if you replace your old one
     uint8_t entry_point[4];        // ROM Addresses: 0x0100 - 0x0103
@@ -82,8 +83,8 @@ private:
     bool romBankingMode;
     
     // Cartridge memory
-    BYTE m_CartridgeMemory[MAX_ROM_SIZE];
-    BYTE m_CartridgeRAM[MAX_RAM_SIZE];
+    std::vector<BYTE> m_CartridgeMemory; // Holds the ROM data
+    std::vector<BYTE> m_CartridgeRAM;    // Holds the external RAM data
     bool loaded;
 
     // Cartridge type info
@@ -117,5 +118,5 @@ private:
     bool verifyChecksum() const;
     void saveRAM() const;
     void loadRAM();
-    BYTE calculate_gameboy_header_checksum(const BYTE* cartridge_memory);
+    BYTE calculate_gameboy_header_checksum(const std::vector<unsigned char>& cartridge_memory)const;
 };

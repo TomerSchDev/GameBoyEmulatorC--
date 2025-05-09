@@ -1,7 +1,6 @@
 #pragma once
-
+#include "common.h"  // Add this at the top
 #include "logger.h"
-#include <common.h>
 #include <vector>
 #include <memory_region.h>
 #include <ram.h>
@@ -34,7 +33,7 @@ class MemoryController {
         BYTE read(WORD address) const;
         void write(WORD address, BYTE data);
         void doDMATransfer(BYTE data);
-        
+        void RequestInterrupt(BYTE interrupt);
         // Direct VRAM access for PPU
         const BYTE getVRAM() const { 
             if (!ram) {

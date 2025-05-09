@@ -14,6 +14,7 @@ constexpr BYTE CLOCK_SELECT_MASK = 0x03;    // Bits 0-1 select clock frequency
 constexpr BYTE DIVIDER_MAX = 255;
 
 class MemoryController; // Forward declaration of MemoryController class
+namespace GB {
 class Timer {
 private:
     std::shared_ptr<MemoryController> memoryController;
@@ -36,9 +37,12 @@ public:
     void updateDividerRegister(int cycles);
     BYTE getDividerRegister() const;
     void resetDividerRegister();
+    void reset();
 
 private:
     int getFrequency() const;
     BYTE getClockFreq() const;
     void setClockFreq();
+    int getFrequencyPeriod() const;
 };
+} // namespace GB

@@ -14,7 +14,14 @@ MemoryController::MemoryController()
     m_RAMBanks.resize(0x8000);  // 32KB of RAM banks
     LOG_INFO("Memory Controller initialized");
 }
-
+void MemoryController::RequestInterrupt(BYTE interrupt) {
+    if (emulator) {
+        emulator->RequestInterrupt(interrupt);
+    } else {
+        LOG_ERROR("Emulator instance is null, cannot request interrupt");
+    }
+    
+}
 BYTE MemoryController::read(WORD address) const {
     if (address > 0xFFFF) {
         LOG_WARNING("Read attempt from restricted memory area: 0x" + std::to_string(address));
@@ -31,8 +38,13 @@ BYTE MemoryController::read(WORD address) const {
             return (joypadRequest & UPPER_NIBBLE_MASK) | emulator->joypad.GetState(joypadRequest);
         }
         case MemoryRegion::ROM_BANK_0:
+            LOG_DEBUG("MemoryController::read - In ROM_BANK_0 for address 0x" + std::to_string(address)); // Add this
             if (cart && cart->isLoaded()) {
-                return cart->read(address);
+                BYTE cartValue = cart->read(address);
+                LOG_DEBUG("MemoryController::read - Cart valid and loaded. cart->read returned 0x" + std::to_string(cartValue)); // Add this
+                return cartValue;
+            } else {
+                LOG_ERROR("MemoryController::read - Cart is NULL or not loaded for ROM_BANK_0 read at 0x" + std::to_string(address)); // Add this
             }
             break;
 
@@ -169,7 +181,10 @@ void MemoryController::DoChangeROMRAMMode(BYTE data) {
 
 void MemoryController::write(WORD address, BYTE data) {
     auto region = getMemoryRegion(address);
-
+    if (address == 0xFF40)
+    {
+        LOG_DEBUG("LCD Control Register (0xFF40) written with value: 0x" + std::to_string(data));
+    }
     std::stringstream ss;
     ss << "Memory Write - Region: " << getMemoryRegionName(region)
        << " Address: 0x" << std::hex << std::setw(4) << std::setfill('0') << address

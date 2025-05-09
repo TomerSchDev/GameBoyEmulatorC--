@@ -1,340 +1,466 @@
 #include "cpu.h"
+#include "instructions.h" // For declarations of *_impl functions
+#include "OpcodeTables.h"
 #include "logger.h"
-#include "cpu_instructions/load_instructions.h"
-#include "cpu_instructions/alu_instructions.h"
-#include "cpu_instructions/jump_instructions.h"
-#include "cpu_instructions/bit_instructions.h"
-#include "cpu_instructions/control_instructions.h"
 #include <sstream>
 #include <iomanip>
-#include <cpu_constants.h>
+#include <stdexcept> // For potential use if needed
+#include "emulator.h"
 
-// Keep constructor
+// Define IF and IE register addresses (example, ensure these are correct for your memory map)
+#define IF_REGISTER 0xFF0F
+#define IE_REGISTER 0xFFFF
+
+namespace GB {
+
+// --- Constructor ---
 CPU::CPU(std::shared_ptr<MemoryController> memory)
-    : memoryController(memory)
-    , halted(false)
-    , stopped(false)
-    , interruptEnabled(false)
-    , pendingInterruptEnable(false)
+    : memoryController(memory),
+      halted(false),
+      stopped(false),
+      interruptEnabled(false),
+      pendingInterruptEnable(false),
+      opcodeTables(OpcodeTables::getInstance()) // Initialize reference to singleton
 {
-    initInstructionUnits();
     Reset();
-    LOG_INFO("CPU initialized");
+    LOG_INFO("CPU initialized and reset.");
 }
-void CPU::initInstructionUnits() {
-    // Initialize all instruction units
-    instructionUnits[static_cast<size_t>(CPUConstants::InstructionType::ALU)] = 
-        std::make_unique<ALUInstructions>(*this);
-    instructionUnits[static_cast<size_t>(CPUConstants::InstructionType::LOAD)] = 
-        std::make_unique<LoadInstructions>(*this);
-    instructionUnits[static_cast<size_t>(CPUConstants::InstructionType::JUMP)] = 
-        std::make_unique<JumpInstructions>(*this);
-    instructionUnits[static_cast<size_t>(CPUConstants::InstructionType::BIT)] = 
-        std::make_unique<BitInstructions>(*this);
-    instructionUnits[static_cast<size_t>(CPUConstants::InstructionType::CONTROL)] = 
-        std::make_unique<ControlInstructions>(*this);
-}
-// Keep Reset method
+
+// --- CPU Reset ---
 void CPU::Reset() {
+    // Initial register values for DMG
     m_RegisterAF.reg = 0x01B0;
     m_RegisterBC.reg = 0x0013;
     m_RegisterDE.reg = 0x00D8;
     m_RegisterHL.reg = 0x014D;
     m_ProgramCounter = 0x0100;
     m_StackPointer.reg = 0xFFFE;
-    LOG_INFO("Initial PC value: 0x" + std::to_string(m_ProgramCounter)); // Add this line
+
     halted = false;
     stopped = false;
     interruptEnabled = false;
     pendingInterruptEnable = false;
-    
-    LOG_INFO("CPU reset to initial state");
+
+    LOG_INFO("CPU reset to initial state. PC=0x0100, SP=0xFFFE");
 }
 
-// Keep all memory access methods
+// --- Memory Access ---
 BYTE CPU::readMemory(WORD address) const {
-    BYTE value = memoryController->read(address);
-    std::stringstream ss;
-    ss << "CPU Memory Read - "
-       << "Address: 0x" << std::hex << std::setw(4) << std::setfill('0') << address
-       << " Value: 0x" << std::setw(2) << static_cast<int>(value);
-    LOG_DEBUG(ss.str());
-    return value;
+    return memoryController->read(address);
 }
 
 void CPU::writeMemory(WORD address, BYTE data) {
-    std::stringstream ss;
-    ss << "CPU Memory Write - "
-       << "Address: 0x" << std::hex << std::setw(4) << std::setfill('0') << address
-       << " Data: 0x" << std::setw(2) << static_cast<int>(data);
-    LOG_DEBUG(ss.str());
     memoryController->write(address, data);
 }
 
-BYTE CPU::readByte() {
-    return readMemory(m_ProgramCounter++);
+BYTE CPU::readBytePC() {
+    BYTE value = readMemory(m_ProgramCounter);
+    m_ProgramCounter++;
+    return value;
 }
 
-WORD CPU::readWord() {
-    WORD word = readMemory(m_ProgramCounter) | (readMemory(m_ProgramCounter + 1) << 8);
-    m_ProgramCounter += 2;
-    return word;
+WORD CPU::readWordPC() {
+    BYTE lo = readBytePC(); // Reads at PC, increments PC
+    BYTE hi = readBytePC(); // Reads at new PC, increments PC
+    return (static_cast<WORD>(hi) << 8) | lo;
 }
 
-// Keep stack operations
-void CPU::pushStackInternal(WORD value) {
-    m_StackPointer.reg -= 2;
-    writeMemory(m_StackPointer.reg, value & 0xFF);
-    writeMemory(m_StackPointer.reg + 1, (value >> 8) & 0xFF);
-    std::stringstream ss_push;
-    ss_push << "Pushed value to stack: 0x" << std::hex << std::setw(4) << std::setfill('0') << value;
-    LOG_DEBUG(ss_push.str());
+// --- Flag Management ---
+// ... (Flag setters/getters remain the same) ...
+void CPU::setFlagZ(bool value) {
+    if (value) m_RegisterAF.lo |= FLAG_Z_MASK;
+    else m_RegisterAF.lo &= ~FLAG_Z_MASK;
+}
+void CPU::setFlagN(bool value) {
+    if (value) m_RegisterAF.lo |= FLAG_N_MASK;
+    else m_RegisterAF.lo &= ~FLAG_N_MASK;
+}
+void CPU::setFlagH(bool value) {
+    if (value) m_RegisterAF.lo |= FLAG_H_MASK;
+    else m_RegisterAF.lo &= ~FLAG_H_MASK;
+}
+void CPU::setFlagC(bool value) {
+    if (value) m_RegisterAF.lo |= FLAG_C_MASK;
+    else m_RegisterAF.lo &= ~FLAG_C_MASK;
 }
 
-WORD CPU::popStackInternal() {
-    BYTE lo = readMemory(m_StackPointer.reg);
-    BYTE hi = readMemory(m_StackPointer.reg + 1);
-    m_StackPointer.reg += 2;
-    WORD poppedValue = (hi << 8) | lo;
-    std::stringstream ss_pop;
-    ss_pop << "Popped value from stack: 0x" << std::hex << std::setw(4) << std::setfill('0') << poppedValue;
-    LOG_DEBUG(ss_pop.str());
+bool CPU::getFlagZ() const { return (m_RegisterAF.lo & FLAG_Z_MASK) != 0; }
+bool CPU::getFlagN() const { return (m_RegisterAF.lo & FLAG_N_MASK) != 0; }
+bool CPU::getFlagH() const { return (m_RegisterAF.lo & FLAG_H_MASK) != 0; }
+bool CPU::getFlagC() const { return (m_RegisterAF.lo & FLAG_C_MASK) != 0; }
 
-    // Add logging if desired
-    return poppedValue;
+
+// --- Stack Operations ---
+void CPU::pushStackWord(WORD value) {
+    m_StackPointer.reg--;
+    writeMemory(m_StackPointer.reg, (value >> 8) & 0xFF); // Push MSB
+    m_StackPointer.reg--;
+    writeMemory(m_StackPointer.reg, value & 0xFF);        // Push LSB
 }
 
-// --- Flag Management Implementations ---
-void CPU::setFlags(BYTE new_f_value) {
-    // The lower 4 bits of the F register are always zero on Game Boy
-    m_RegisterAF.lo = new_f_value & 0xF0;
+WORD CPU::popStackWord() {
+    BYTE lo = readMemory(m_StackPointer.reg);        // Pop LSB
+    m_StackPointer.reg++;
+    BYTE hi = readMemory(m_StackPointer.reg);        // Pop MSB
+    m_StackPointer.reg++;
+    return (static_cast<WORD>(hi) << 8) | lo;
 }
 
-BYTE CPU::getFlags() const {
-    return m_RegisterAF.lo;
+// --- Interrupt Handling ---
+// ... (Interrupt handling code remains the same) ...
+void CPU::RequestInterrupt(BYTE interruptBit) {
+    BYTE currentIF = readMemory(IF_REGISTER);
+    writeMemory(IF_REGISTER, currentIF | interruptBit);
 }
 
-bool CPU::getFlagZ() const {
-    return (getFlags() & FLAG_Z_MASK) != 0;
-}
-
-bool CPU::getFlagN() const {
-    return (getFlags() & FLAG_N_MASK) != 0;
-}
-
-bool CPU::getFlagH() const {
-    return (getFlags() & FLAG_H_MASK) != 0;
-}
-
-bool CPU::getFlagC() const {
-    return (getFlags() & FLAG_C_MASK) != 0;
-}
-int CPU::ExecuteExtendedOpcode() {
-    BYTE extendedOpcode = readByte(); // Fetches the byte after CB, increments PC
-
-    // Log the CB-prefixed instruction
-    // PC at this point is after reading the extendedOpcode.
-    // The address of the 0xCB instruction was (m_ProgramCounter - 2).
-    // The address of the extendedOpcode itself was (m_ProgramCounter - 1).
-    std::stringstream ss_log_cb;
-    ss_log_cb << "PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << (m_ProgramCounter - 2)
-              << " OP: 0xCB " << std::setw(2) << std::setfill('0') << static_cast<int>(extendedOpcode)
-              << " (" << CPUConstants::CB_OPCODE_TABLE[extendedOpcode].mnemonic << ")";
-    LOG_DEBUG(ss_log_cb.str());
-    const auto& entry = CPUConstants::CB_OPCODE_TABLE[extendedOpcode];
-
-    // All CB opcodes should be of type BIT.
-    if (entry.type != CPUConstants::InstructionType::BIT) {
-        std::stringstream error_ss;
-        error_ss << "CB Opcode 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(extendedOpcode)
-                 << " is not of type BIT. Mnemonic: " << entry.mnemonic;
-        LOG_ERROR(error_ss.str());
-        // It's an unknown/malformed CB instruction.
-        // m_ProgramCounter is already past this extendedOpcode.
-        return handleUnknownOpcode(extendedOpcode); // Or a specific value for unknown CB.
+int CPU::handleInterrupts() {
+    if (!interruptEnabled && !halted) {
+        return 0; // No interrupts to handle if interrupts are disabled and not halted
     }
 
-    auto& bitUnit = instructionUnits[static_cast<size_t>(CPUConstants::InstructionType::BIT)];
-    if (bitUnit) {
-        // The BitInstructions unit's execute method will handle the specific CB operation
-        // and should return the correct number of cycles, likely by consulting CB_OPCODE_TABLE[extendedOpcode].duration_cycles.
-        return bitUnit->execute(extendedOpcode);
+    BYTE IE = readMemory(IE_REGISTER);
+    BYTE IF = readMemory(IF_REGISTER);
+    BYTE requestedAndEnabled = IE & IF;
+    // *** ADD THIS LOG ***
+    if ((IE & IF) != 0) { // Log only if there's potential for an interrupt
+        std::stringstream ss;
+        ss << "HandleInterrupts Check: IME=" << interruptEnabled
+        << " IE=0x" << std::hex << static_cast<int>(IE)
+        << " IF=0x" << static_cast<int>(IF)
+        << " ReqEn=0x" << static_cast<int>(requestedAndEnabled);
+        LOG_DEBUG(ss.str());
+}
+    if (requestedAndEnabled == 0) {
+        return 0; // No interrupts to handle
     }
 
-    std::stringstream error_ss_unit;
-    error_ss_unit << "BitInstruction unit missing for CB opcode: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(extendedOpcode);
-    LOG_ERROR(error_ss_unit.str());
-    return handleUnknownOpcode(extendedOpcode); // Pass the extended opcode
-}
-
-
-int CPU::ExecuteOpcode(BYTE opcode) {
-    // Logging for primary opcodes is done in ExecuteNextOpcode.
-    // This function handles non-CB prefixed opcodes.
-
-    const auto& entry = CPUConstants::FULL_OPCODE_TABLE[opcode];
-    
-    // Check for UNKNOWN type (which would include 0xED if not defined or defined as UNKNOWN)
-    if (entry.type == CPUConstants::InstructionType::UNKNOWN) {
-        return handleUnknownOpcode(opcode);
-    }
-
-    // Get the appropriate instruction unit
-    auto& unit = instructionUnits[static_cast<size_t>(entry.type)];
-    
-    if (unit) {
-        // The unit's execute method is responsible for:
-        // 1. Performing the instruction's logic.
-        // 2. Reading any additional operands using cpu.readByte() or cpu.readWord(), which advances PC.
-        // 3. Returning the total cycles taken for this instruction,
-        //    likely by using entry.duration_cycles and entry.duration_cycles_conditional.
-        return unit->execute(opcode);
-    }
-
-    // This case should ideally not be reached if all instruction types have corresponding units initialized.
-    std::stringstream error_ss_op_unit;
-    error_ss_op_unit << "Instruction unit missing for type: " << static_cast<int>(entry.type)
-                     << " for opcode: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(opcode);
-    LOG_ERROR(error_ss_op_unit.str());
-    return handleUnknownOpcode(opcode);
-}
-
-// Keep all interrupt handling methods
-void CPU::handleInterrupts(BYTE pendingInterrupts) {
-    if (pendingInterrupts) {
-        LOG_DEBUG("Pending interrupts: 0x" + std::to_string(pendingInterrupts));
-    }
-}
-
-bool CPU::checkInterrupts() {
-    if (!interruptEnabled) {
-        LOG_DEBUG("Interrupts disabled, skipping check");
-        return false;
-    }
-
-    BYTE pendingInterrupts = getPendingInterrupts();
-    if (!pendingInterrupts) {
-        return false;
-    }
-
-    struct InterruptHandler {
-        BYTE bit;
-        WORD address;
-        void (CPU::*handler)();
-    };
-
-    const InterruptHandler handlers[] = {
-        {VBLANK_INTERRUPT_BIT, VBLANK_ISR_ADDR, &CPU::handleVBlankInterrupt},
-        {LCD_INTERRUPT_BIT, LCD_ISR_ADDR, &CPU::handleLCDInterrupt},
-        {TIMER_INTERRUPT_BIT, TIMER_ISR_ADDR, &CPU::handleTimerInterrupt},
-        {JOYPAD_INTERRUPT_BIT, JOYPAD_ISR_ADDR, &CPU::handleJoypadInterrupt}
-    };
-
-    for (const auto& handler : handlers) {
-        if (pendingInterrupts & handler.bit) {
-            (this->*handler.handler)();
-            LOG_DEBUG("Handling interrupt with bit: 0x" + std::to_string(handler.bit));
-            return true;
-        }
-    }
-    return false;
-}
-
-// Keep all interrupt service routines
-void CPU::handleVBlankInterrupt() {
-    serviceInterrupt(VBLANK_ISR_ADDR, VBLANK_INTERRUPT_BIT);
-}
-
-void CPU::handleLCDInterrupt() {
-    serviceInterrupt(LCD_ISR_ADDR, LCD_INTERRUPT_BIT);
-}
-
-void CPU::handleTimerInterrupt() {
-    serviceInterrupt(TIMER_ISR_ADDR, TIMER_INTERRUPT_BIT);
-}
-
-void CPU::handleJoypadInterrupt() {
-    serviceInterrupt(JOYPAD_ISR_ADDR, JOYPAD_INTERRUPT_BIT);
-}
-
-void CPU::serviceInterrupt(WORD address, BYTE interruptBit) {
-    bool wasInterruptEnabled = interruptEnabled;
-    interruptEnabled = false;
-    pushStackInternal(m_ProgramCounter);
-    clearInterruptFlag(interruptBit);
-    m_ProgramCounter = address;
-    LOG_DEBUG("Servicing interrupt at: 0x" + std::to_string(address) + 
-              " Previous interrupt state: " + (wasInterruptEnabled ? "enabled" : "disabled"));
-}
-
-// Keep helper methods
-void CPU::clearInterruptFlag(BYTE bit) {
-    BYTE flags = readMemory(IF_REGISTER);
-    writeMemory(IF_REGISTER, flags & ~bit);
-    LOG_DEBUG("Cleared interrupt flag: 0x" + std::to_string(bit));
-}
-
-BYTE CPU::getPendingInterrupts() const {
-    BYTE flags = readMemory(IF_REGISTER);
-    BYTE enable = readMemory(IE_REGISTER);
-    return flags & enable;
-}
-
-int CPU::ExecuteNextOpcode() {
     if (halted) {
-        return 4; // HALT consumes 4 cycles per "do nothing"
-    }
-    if (pendingInterruptEnable) {
-        interruptEnabled = true;
-        pendingInterruptEnable = false;
-        LOG_DEBUG("Interrupts enabled after instruction");
-    }
-    if (checkInterrupts()) {
-        return 20;  // Interrupt handling consumes 20 cycles
+        halted = false;
     }
 
-    BYTE opcode = readByte();
-    logOpcode(opcode);
-
-    if (opcode == 0xCB) {
-        // CB prefix indicates an extended opcode
-        LOG_INFO("Extended opcode detected: 0xCB");
-        return ExecuteExtendedOpcode();
-    } else {
-        // Handle normal opcode
-        LOG_INFO("Normal opcode detected: 0x" + std::to_string(opcode));
-        return ExecuteOpcode(opcode);
+    if (!interruptEnabled) {
+        return 0; // Interrupts are disabled, do not handle them
     }
+
+    BYTE interruptToService = 0;
+    WORD interruptAddress = 0;
+
+    if (requestedAndEnabled & 0x01) { // VBlank
+        interruptToService = 0x01;
+        interruptAddress = 0x0040;
+    } else if (requestedAndEnabled & 0x02) { // LCD STAT
+        interruptToService = 0x02;
+        interruptAddress = 0x0048;
+    } else if (requestedAndEnabled & 0x04) { // Timer
+        interruptToService = 0x04;
+        interruptAddress = 0x0050;
+    } else if (requestedAndEnabled & 0x08) { // Serial
+        interruptToService = 0x08;
+        interruptAddress = 0x0058;
+    } else if (requestedAndEnabled & 0x10) { // Joypad
+        interruptToService = 0x10;
+        interruptAddress = 0x0060;
+    }
+
+    if (interruptToService != 0) {
+        interruptEnabled = false;
+        writeMemory(IF_REGISTER, IF & ~interruptToService);
+        pushStackWord(m_ProgramCounter);
+        m_ProgramCounter = interruptAddress;
+        LOG_DEBUG("Servicing Interrupt - Type: 0x" + std::to_string(interruptToService) + " Addr: 0x" + std::to_string(interruptAddress));
+        LOG_DEBUG("Interrupt serviced successfully.");
+    }
+    return 20; // 5 M-cycles (20 T-cycles) for handling an interrupt
 }
-void CPU::logOpcode(BYTE opcode) {
+
+
+// --- Logging Helper ---
+void CPU::logOpcodeExecution(BYTE opcode_val, bool is_prefixed, const OpcodeInfo& info, WORD current_pc_before_fetch) {
     std::stringstream ss;
-    // m_ProgramCounter was already incremented, so this shows where the instruction was fetched from
-    WORD opcode_addr = m_ProgramCounter - 1;
-    
-    ss << "PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << opcode_addr
-       << " OP: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(opcode)
-       << " (" << CPUConstants::getInstructionMnemonic(opcode) << ")"
-       << " B=" << static_cast<int>(getB()) 
-       << " D=" << static_cast<int>(getD())
-       << " HL=0x" << std::hex << getHL_ref().reg
-       << " A=" << static_cast<int>(getA());
+    ss << "PC:0x" << std::hex << std::setw(4) << std::setfill('0') << current_pc_before_fetch
+       << " | Op:0x" << std::setw(2) << std::setfill('0') << static_cast<int>(opcode_val)
+       << (is_prefixed ? " (CB)" : "")
+       << " | Mnem:" << info.mnemonic
+       << " | AF:" << std::setw(4) << getAF()
+       << " BC:" << std::setw(4) << getBC()
+       << " DE:" << std::setw(4) << getDE()
+       << " HL:" << std::setw(4) << getHL()
+       << " SP:" << std::setw(4) << getSP()
+       << " | Flags:" << (getFlagZ() ? "Z" : "-") << (getFlagN() ? "N" : "-")
+       << (getFlagH() ? "H" : "-") << (getFlagC() ? "C" : "-");
     LOG_DEBUG(ss.str());
 }
 
-int CPU::handleUnknownOpcode(BYTE opcode) {
-    std::stringstream ss;
-    // (m_ProgramCounter - 1) is the address of the unknown 'opcode'
-    // because m_ProgramCounter was incremented by the readByte() that fetched it.
-    ss << "Unknown opcode: 0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(opcode)
-       << " at PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << (m_ProgramCounter - 1);
-    LOG_ERROR(ss.str());
 
-    // Return a default number of cycles for unknown opcodes.
-    // This prevents the emulator from getting stuck if it continuously encounters unknown opcodes.
-    // The PC has already been advanced by 1 (by the readByte that fetched this unknown opcode).
-    // No further PC increment is done here, assuming unknown opcodes are treated as 1-byte long
-    // as per the default OpcodeTableEntry constructor.
-    return CPUConstants::UNKNOWN_OPCODE_CYCLES;
+// --- Core Execution Logic ---
+int CPU::ExecuteNextOpcode() {
+    handleInterrupts(); // Check for and handle interrupts first
+
+    if (pendingInterruptEnable) {
+        interruptEnabled = true;
+        pendingInterruptEnable = false;
+    }
+
+    if (halted) {
+        return 4; // 1 M-cycle (4 T-cycles)
+    }
+
+    WORD pc_before_fetch = m_ProgramCounter;
+    BYTE opcode = readBytePC(); // Fetch opcode, PC is now advanced
+
+    // *** ADDED LOG 1: Log the fetched byte immediately ***
+    LOG_DEBUG("ExecuteNextOpcode - Fetched byte at 0x" + std::to_string(pc_before_fetch) + " = 0x" + std::to_string(opcode));
+
+    const OpcodeInfo& info = (opcode == 0xCB)
+                             ? opcodeTables.getInfo(readBytePC(), true) // Fetch CB sub-opcode
+                             : opcodeTables.getInfo(opcode, false);     // Get info for standard opcode
+
+    // *** ADDED LOG 2: Log the opcode value *before* passing it to logOpcodeExecution ***
+    LOG_DEBUG("ExecuteNextOpcode - Opcode value before logging/processing = 0x" + std::to_string(opcode));
+
+    // Log before execution
+    if (opcode == 0xCB) {
+         // Use info.address which is the CB sub-opcode value
+         logOpcodeExecution(info.address, true, info, pc_before_fetch);
+    } else {
+         // Use the original fetched opcode
+         logOpcodeExecution(opcode, false, info, pc_before_fetch);
+    }
+
+    int cycles = processInstruction(info);
+
+    return cycles;
 }
 
-// Remove the old CPU_8BIT_LOAD method as it's now handled by LoadInstructions class
+
+
+
+// ... (processInstruction and handleUnknownOpcode remain the same) ...
+int CPU::processInstruction(const OpcodeInfo& info) {
+    // --- 8-bit Load Instructions ---
+    if (info.mnemonic == "LD") {
+        // Further differentiate LD instructions based on operands
+        // This is where the mapping to specific LD_impl functions happens
+        if (info.operand2 == Register::NONE && (info.operand1 >= Register::A && info.operand1 <= Register::L)) { // LD r, n8
+             if (info.length == 2) return LD_reg_n8_impl(*this, info);
+        }
+        if (info.operand1 == Register::MEM_HL && info.length == 2) { // LD (HL), n8
+            return LD_memHL_n8_impl(*this, info);
+        }
+        if (info.operand1 >= Register::A && info.operand1 <= Register::L &&
+            info.operand2 >= Register::A && info.operand2 <= Register::L) { // LD r, r'
+            return LD_reg_reg_impl(*this, info);
+        }
+        if (info.operand1 >= Register::A && info.operand1 <= Register::L && info.operand2 == Register::MEM_HL) { // LD r, (HL)
+            return LD_reg_memHL_impl(*this, info);
+        }
+        if (info.operand1 == Register::MEM_HL && info.operand2 >= Register::A && info.operand2 <= Register::L) { // LD (HL), r
+            return LD_memHL_reg_impl(*this, info);
+        }
+        if (info.operand1 == Register::A && info.operand2 == Register::MEM_BC) return LD_A_memBC_impl(*this, info);
+        if (info.operand1 == Register::A && info.operand2 == Register::MEM_DE) return LD_A_memDE_impl(*this, info);
+        if (info.operand1 == Register::A && info.operand2 == Register::MEM_A16) return LD_A_memA16_impl(*this, info);
+        if (info.operand1 == Register::MEM_BC && info.operand2 == Register::A) return LD_memBC_A_impl(*this, info);
+        if (info.operand1 == Register::MEM_DE && info.operand2 == Register::A) return LD_memDE_A_impl(*this, info);
+        if (info.operand1 == Register::MEM_A16 && info.operand2 == Register::A) return LD_memA16_A_impl(*this, info);
+
+        // LDH instructions (Check mnemonic again, might be redundant if group is used)
+        if (info.mnemonic == "LDH") {
+            if (info.operand1 == Register::MEM_A8 && info.operand2 == Register::A) return LDH_memA8_A_impl(*this, info);
+            if (info.operand1 == Register::A && info.operand2 == Register::MEM_A8) return LDH_A_memA8_impl(*this, info);
+            if (info.operand1 == Register::MEM_C && info.operand2 == Register::A) return LDH_memC_A_impl(*this, info); // LD (C), A
+            if (info.operand1 == Register::A && info.operand2 == Register::MEM_C) return LDH_A_memC_impl(*this, info); // LD A, (C)
+        }
+
+        // LD A, (HLI/HLD) and LD (HLI/HLD), A
+        if (info.operand1 == Register::A && info.operand2 == Register::MEM_HLI) return LD_A_memHLI_impl(*this, info);
+        if (info.operand1 == Register::A && info.operand2 == Register::MEM_HLD) return LD_A_memHLD_impl(*this, info);
+        if (info.operand1 == Register::MEM_HLI && info.operand2 == Register::A) return LD_memHLI_A_impl(*this, info);
+        if (info.operand1 == Register::MEM_HLD && info.operand2 == Register::A) return LD_memHLD_A_impl(*this, info);
+    }
+
+    // --- 16-bit Load Instructions ---
+    if (info.mnemonic == "LD" && info.group == InstructionGroup::X16_LSM) {
+        if ((info.operand1 == Register::BC || info.operand1 == Register::DE || info.operand1 == Register::HL || info.operand1 == Register::SP) && info.length == 3) { // LD rr, n16
+            return LD_rr_n16_impl(*this, info);
+        }
+        if (info.operand1 == Register::SP && info.operand2 == Register::HL) return LD_SP_HL_impl(*this, info);
+        if (info.operand1 == Register::MEM_A16 && info.operand2 == Register::SP) return LD_memA16_SP_impl(*this, info);
+        if (info.operand1 == Register::HL && info.operand2 == Register::SP ) { // LD HL, SP+e8 (0xF8)
+             // This specific form has e8 as an immediate value after SP.
+             return LD_HL_SP_e8_impl(*this, info);
+        }
+    }
+    if (info.mnemonic == "PUSH") return PUSH_rr_impl(*this, info);
+    if (info.mnemonic == "POP") return POP_rr_impl(*this, info);
+
+
+    // --- 8-bit ALU Instructions ---
+    if (info.mnemonic == "ADD" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand2 >= Register::A && info.operand2 <= Register::L) return ADD_A_reg_impl(*this, info);
+        if (info.operand2 == Register::MEM_HL) return ADD_A_memHL_impl(*this, info);
+        if (info.operand2 == Register::NONE && info.length == 2) return ADD_A_n8_impl(*this, info); // ADD A, n8
+    }
+    if (info.mnemonic == "ADC" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand2 >= Register::A && info.operand2 <= Register::L) return ADC_A_reg_impl(*this, info);
+        if (info.operand2 == Register::MEM_HL) return ADC_A_memHL_impl(*this, info);
+        if (info.operand2 == Register::NONE && info.length == 2) return ADC_A_n8_impl(*this, info);
+    }
+    if (info.mnemonic == "SUB" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand2 >= Register::A && info.operand2 <= Register::L) return SUB_A_reg_impl(*this, info);
+        if (info.operand2 == Register::MEM_HL) return SUB_A_memHL_impl(*this, info);
+        if (info.operand2 == Register::NONE && info.length == 2) return SUB_A_n8_impl(*this, info);
+    }
+    if (info.mnemonic == "SBC" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand2 >= Register::A && info.operand2 <= Register::L) return SBC_A_reg_impl(*this, info);
+        if (info.operand2 == Register::MEM_HL) return SBC_A_memHL_impl(*this, info);
+        if (info.operand2 == Register::NONE && info.length == 2) return SBC_A_n8_impl(*this, info);
+    }
+    if (info.mnemonic == "AND" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand2 >= Register::A && info.operand2 <= Register::L) return AND_A_reg_impl(*this, info);
+        if (info.operand2 == Register::MEM_HL) return AND_A_memHL_impl(*this, info);
+        if (info.operand2 == Register::NONE && info.length == 2) return AND_A_n8_impl(*this, info);
+    }
+    if (info.mnemonic == "XOR" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand2 >= Register::A && info.operand2 <= Register::L) return XOR_A_reg_impl(*this, info);
+        if (info.operand2 == Register::MEM_HL) return XOR_A_memHL_impl(*this, info);
+        if (info.operand2 == Register::NONE && info.length == 2) return XOR_A_n8_impl(*this, info);
+    }
+    if (info.mnemonic == "OR" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand2 >= Register::A && info.operand2 <= Register::L) return OR_A_reg_impl(*this, info);
+        if (info.operand2 == Register::MEM_HL) return OR_A_memHL_impl(*this, info);
+        if (info.operand2 == Register::NONE && info.length == 2) return OR_A_n8_impl(*this, info);
+    }
+    if (info.mnemonic == "CP" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand2 >= Register::A && info.operand2 <= Register::L) return CP_A_reg_impl(*this, info);
+        if (info.operand2 == Register::MEM_HL) return CP_A_memHL_impl(*this, info);
+        if (info.operand2 == Register::NONE && info.length == 2) return CP_A_n8_impl(*this, info);
+    }
+    if (info.mnemonic == "INC" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand1 >= Register::A && info.operand1 <= Register::L) return INC_reg_impl(*this, info);
+        if (info.operand1 == Register::MEM_HL) return INC_memHL_impl(*this, info);
+    }
+    if (info.mnemonic == "DEC" && info.group == InstructionGroup::X8_ALU) {
+        if (info.operand1 >= Register::A && info.operand1 <= Register::L) return DEC_reg_impl(*this, info);
+        if (info.operand1 == Register::MEM_HL) return DEC_memHL_impl(*this, info);
+    }
+
+    // --- 16-bit ALU Instructions ---
+    if (info.mnemonic == "ADD" && info.group == InstructionGroup::X16_ALU) {
+         if (info.operand1 == Register::HL && (info.operand2 == Register::BC || info.operand2 == Register::DE || info.operand2 == Register::HL || info.operand2 == Register::SP) ) {
+            return ADD_HL_rr_impl(*this, info);
+         }
+         if (info.operand1 == Register::SP && info.length == 2) { // ADD SP, e8
+            return ADD_SP_e8_impl(*this, info);
+         }
+    }
+    if (info.mnemonic == "INC" && info.group == InstructionGroup::X16_ALU) return INC_rr_impl(*this, info);
+    if (info.mnemonic == "DEC" && info.group == InstructionGroup::X16_ALU) return DEC_rr_impl(*this, info);
+
+
+    // --- Rotate and Shift Instructions (Non-CB) ---
+    if (info.mnemonic == "RLCA") return RLCA_impl(*this, info);
+    if (info.mnemonic == "RLA") return RLA_impl(*this, info);
+    if (info.mnemonic == "RRCA") return RRCA_impl(*this, info);
+    if (info.mnemonic == "RRA") return RRA_impl(*this, info);
+
+    // --- CB-Prefixed Instructions (dispatched from here if info.isPrefixed) ---
+    if (info.isPrefixed) {
+        if (info.mnemonic == "RLC") {
+            if (info.operand1 != Register::MEM_HL) return RLC_reg_impl(*this, info);
+            else return RLC_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "RRC") {
+            if (info.operand1 != Register::MEM_HL) return RRC_reg_impl(*this, info);
+            else return RRC_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "RL") {
+            if (info.operand1 != Register::MEM_HL) return RL_reg_impl(*this, info);
+            else return RL_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "RR") {
+            if (info.operand1 != Register::MEM_HL) return RR_reg_impl(*this, info);
+            else return RR_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "SLA") {
+            if (info.operand1 != Register::MEM_HL) return SLA_reg_impl(*this, info);
+            else return SLA_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "SRA") {
+            if (info.operand1 != Register::MEM_HL) return SRA_reg_impl(*this, info);
+            else return SRA_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "SWAP") {
+            if (info.operand1 != Register::MEM_HL) return SWAP_reg_impl(*this, info);
+            else return SWAP_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "SRL") {
+            if (info.operand1 != Register::MEM_HL) return SRL_reg_impl(*this, info);
+            else return SRL_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "BIT") {
+            if (info.operand1 != Register::MEM_HL) return BIT_b_reg_impl(*this, info);
+            else return BIT_b_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "RES") {
+            if (info.operand1 != Register::MEM_HL) return RES_b_reg_impl(*this, info);
+            else return RES_b_memHL_impl(*this, info);
+        }
+        if (info.mnemonic == "SET") {
+            if (info.operand1 != Register::MEM_HL) return SET_b_reg_impl(*this, info);
+            else return SET_b_memHL_impl(*this, info);
+        }
+    }
+
+    // --- Control/Branch Instructions ---
+    if (info.mnemonic == "JP") {
+        if (info.operand1 == Register::HL) return JP_HL_impl(*this, info);
+        if (info.condition != ConditionType::NONE && info.length == 3) return JP_cc_n16_impl(*this, info);
+        if (info.condition == ConditionType::NONE && info.length == 3) return JP_n16_impl(*this, info);
+    }
+    if (info.mnemonic == "JR") {
+        if (info.condition != ConditionType::NONE) return JR_cc_e8_impl(*this, info);
+        return JR_e8_impl(*this, info);
+    }
+    if (info.mnemonic == "CALL") {
+        if (info.condition != ConditionType::NONE) return CALL_cc_n16_impl(*this, info);
+        return CALL_n16_impl(*this, info);
+    }
+    if (info.mnemonic == "RET") {
+        if (info.condition != ConditionType::NONE) return RET_cc_impl(*this, info);
+        return RET_impl(*this, info);
+    }
+    if (info.mnemonic == "RETI") return RETI_impl(*this, info);
+    if (info.mnemonic == "RST") return RST_impl(*this, info);
+
+
+    // --- Control/Miscellaneous Instructions ---
+    if (info.mnemonic == "NOP") return NOP_impl(*this, info);
+    if (info.mnemonic == "HALT") return HALT_impl(*this, info);
+    if (info.mnemonic == "STOP") return STOP_impl(*this, info);
+    if (info.mnemonic == "DI") return DI_impl(*this, info);
+    if (info.mnemonic == "EI") return EI_impl(*this, info);
+    if (info.mnemonic == "DAA") return DAA_impl(*this, info);
+    if (info.mnemonic == "CPL") return CPL_impl(*this, info);
+    if (info.mnemonic == "SCF") return SCF_impl(*this, info);
+    if (info.mnemonic == "CCF") return CCF_impl(*this, info);
+
+
+    // If no specific handler was found
+    return handleUnknownOpcode(info.address, info.isPrefixed);
+}
+
+
+int CPU::handleUnknownOpcode(BYTE opcode, bool prefixed) {
+    std::stringstream ss;
+    ss << "Unknown or unimplemented opcode: " << (prefixed ? "CB " : "")
+       << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(opcode)
+       << " at PC=0x" << std::hex << std::setw(4) << std::setfill('0') << (m_ProgramCounter - (prefixed ? 2 : 1)); // PC is already advanced
+    LOG_ERROR(ss.str());
+    // You might want to throw an exception or stop emulation here
+    // For now, return a default cycle count to avoid infinite loops if possible
+    return 4;
+}
+
+} // namespace GB
+

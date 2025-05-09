@@ -55,7 +55,7 @@ void CPU::writeMemory(WORD address, BYTE data) {
 
 BYTE CPU::readBytePC() {
     BYTE value = readMemory(m_ProgramCounter);
-    m_ProgramCounter++;
+    m_ProgramCounter++; // This increments the PC
     return value;
 }
 
@@ -227,8 +227,33 @@ int CPU::ExecuteNextOpcode() {
          logOpcodeExecution(opcode, false, info, pc_before_fetch);
     }
 
+    // *** Log PC before processInstruction ***
+    std::stringstream ssbefore;
+    ssbefore << "PC before processInstruction: 0x" << std::hex << std::setw(4) << std::setfill('0') << m_ProgramCounter;
+    LOG_DEBUG(ssbefore.str());
+
     int cycles = processInstruction(info);
 
+    // *** Log PC after processInstruction ***
+    std::stringstream ssafter;
+    ssafter << "PC after processInstruction: 0x" << std::hex << std::setw(4) << std::setfill('0') << m_ProgramCounter;
+    LOG_DEBUG(ssafter.str());
+
+    if (cycles < 0) {
+        LOG_ERROR("Error processing opcode: 0x" + std::to_string(opcode) + " at PC: 0x" + std::to_string(pc_before_fetch));
+        return cycles;
+    }
+
+    // *** ADDED LOG 3: Log PC right before returning cycles ***
+    std::stringstream ssreturn;
+    ssreturn << "PC before returning cycles: 0x" << std::hex << std::setw(4) << std::setfill('0') << m_ProgramCounter;
+    LOG_DEBUG(ssreturn.str());
+
+
+    // The total cycles for the instruction is the sum of CPU cycles and hardware cycles
+    // However, ExecuteNextOpcode is expected to return the CPU cycles for the instruction itself
+    // The timer/ppu updates consume cycles based on the CPU cycles.
+    // The return value should be the CPU cycles returned by processInstruction
     return cycles;
 }
 
@@ -237,6 +262,15 @@ int CPU::ExecuteNextOpcode() {
 
 // ... (processInstruction and handleUnknownOpcode remain the same) ...
 int CPU::processInstruction(const OpcodeInfo& info) {
+    //log state before executing the instruction
+    //LOG_DEBUG("Processing instruction: " + info.mnemonic + " at PC: 0x" + std::to_string(m_ProgramCounter - info.length));
+    LOG_INFO("Processing instruction: " + info.mnemonic + " at PC: 0x" + std::to_string(m_ProgramCounter - info.length) +
+             " | AF:0x" + std::to_string(getAF()) +
+             " BC:0x" + std::to_string(getBC()) +
+             " DE:0x" + std::to_string(getDE()) +
+             " HL:0x" + std::to_string(getHL()) +
+             " SP:0x" + std::to_string(getSP()));
+    LOG_INFO("Instruction length: " + std::to_string(info.length) + " cycles: " + std::to_string(info.cycles[0]));
     // --- 8-bit Load Instructions ---
     if (info.mnemonic == "LD") {
         // Further differentiate LD instructions based on operands
@@ -463,4 +497,3 @@ int CPU::handleUnknownOpcode(BYTE opcode, bool prefixed) {
 }
 
 } // namespace GB
-

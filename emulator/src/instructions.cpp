@@ -2,7 +2,7 @@
 #include "cpu.h" // For CPU class definition and access to its members
 #include "logger.h" // For logging
 #include <stdexcept> // For std::runtime_error if needed for critical errors
-
+#include <sstream> // For stringstream usage in logging
 namespace GB {
 
 // Helper function to get a reference to an 8-bit register based on the enum
@@ -542,7 +542,14 @@ int INC_memHL_impl(CPU& cpu, const OpcodeInfo& info) {
 void alu_dec8(CPU& cpu, BYTE& reg) {
     BYTE original_val = reg;
     reg--;
-    cpu.setFlagZ(reg == 0);
+    std::stringstream ss;
+    ss << "alu_dec8: After decrementing, reg = 0x" << std::hex << static_cast<int>(reg) << " | reg == 0 is " << (reg == 0 ? "true" : "false");
+    LOG_DEBUG(ss.str());
+    int reg_val = static_cast<int>(reg); // Cast to int for comparison
+    ss.str(""); // Clear the stringstream for the next log
+    ss << "alu_dec8: After decrementing, reg_val = " << reg_val << " | original_val = " << static_cast<int>(original_val) << " | original_val == 0 is " << (original_val == 0 ? "true" : "false") << " | reg_val == 0 is " << (reg_val == 0 ? "true" : "false")<< std::endl;
+    LOG_DEBUG(ss.str());
+    cpu.setFlagZ(reg_val == 0);
     cpu.setFlagN(true);
     cpu.setFlagH((original_val & 0xF) == 0x0); // Half borrow if LSN was 0x0
     // C flag is not affected
@@ -984,22 +991,53 @@ int JR_e8_impl(CPU& cpu, const OpcodeInfo& info) {
 }
 
 int JR_cc_e8_impl(CPU& cpu, const OpcodeInfo& info) {
-    // JR cc, e8 : Conditional relative jump.
-    // Flags: - - - -
     signed char offset = static_cast<signed char>(cpu.readBytePC());
     bool condition_met = false;
+    int cycles = info.cycles[1]; // Default cycles for no jump
+    bool z_flag_state = cpu.getFlagZ();
+    bool c_flag_state = cpu.getFlagC(); // Also check C for other JR conditions 
+
+
+    std::stringstream ss_cond;
+    ss_cond << "JR condition check: Mnem=" << info.mnemonic << " Condition=";
+
     switch (info.condition) {
-        case ConditionType::NZ: condition_met = !cpu.getFlagZ(); break;
-        case ConditionType::Z:  condition_met = cpu.getFlagZ(); break;
-        case ConditionType::NC: condition_met = !cpu.getFlagC(); break;
-        case ConditionType::C:  condition_met = cpu.getFlagC(); break;
-        default: break;
+        case ConditionType::NZ:
+            ss_cond << "NZ (!Z)";
+            condition_met = !z_flag_state;
+            ss_cond << " | Z state: " << z_flag_state << " | Condition met: " << condition_met;
+            break;
+        case ConditionType::Z:
+            ss_cond << "Z";
+            condition_met = z_flag_state;
+            ss_cond << " | Z state: " << z_flag_state << " | Condition met: " << condition_met;
+            break;
+        case ConditionType::NC:
+            ss_cond << "NC (!C)";
+            condition_met = !c_flag_state;
+            ss_cond << " | C state: " << c_flag_state << " | Condition met: " << condition_met;
+            break;
+        case ConditionType::C:
+            ss_cond << "C";
+            condition_met = c_flag_state;
+            ss_cond << " | C state: " << c_flag_state << " | Condition met: " << condition_met;
+            break;
+        default:
+            ss_cond << "NONE"; // Should not happen for conditional JR
+            break;
     }
+    LOG_DEBUG(ss_cond.str());
+
     if (condition_met) {
+        std::stringstream ss_jump;
+        ss_jump << "JR taking jump. Current PC: 0x" << std::hex << cpu.getPC() << " + offset (" << static_cast<int>(offset) << ") = 0x" << (cpu.getPC() + offset);
+        LOG_DEBUG(ss_jump.str());
         cpu.setPC(cpu.getPC() + offset);
         return info.cycles[0]; // 12 cycles if jump
-    }
-    return info.cycles[1]; // 8 cycles if no jump
+    } 
+    std::stringstream ss_no_jump;
+    ss_no_jump << "JR not taking jump. Current PC: 0x" << std::hex << cpu.getPC() << " + offset (" << static_cast<int>(offset) << ") = 0x" << (cpu.getPC() + offset);
+    return cycles; // 8 cycles if no jump
 }
 
 int CALL_n16_impl(CPU& cpu, const OpcodeInfo& info) {
